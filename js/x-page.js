@@ -1477,9 +1477,15 @@ async function runXCommentGeneration(user, post, options) {
   try {
     loading.setStatus('正在整理上下文...')
     var allChars = await getXAvailableCharacters()
-    var chars = options.charIds && options.charIds.length
+    // 注意：charIds 可能是空数组（用户手动取消了全部勾选，代表"这次全用路人"），
+    // 不能用 .length 真值判断，要用 !== undefined 区分"没传"和"传了空数组"
+    var hasSelection = options.charIds !== undefined
+    var chars = hasSelection
       ? allChars.filter(function(c) { return options.charIds.indexOf(c.id) !== -1 })
       : allChars
+    var excludedChars = hasSelection
+      ? allChars.filter(function(c) { return options.charIds.indexOf(c.id) === -1 })
+      : []
     loading.setStatus('正在读取最近的微信聊天记录...')
     var chatContextMap = await buildXRecentChatContextMap(user, chars)
     var charBlock = chars.length
@@ -1491,6 +1497,9 @@ async function runXCommentGeneration(user, post, options) {
           return base
         }).join('\n')
       : '（暂无已建角色，全部使用路人评论）'
+    var excludedBlock = excludedChars.length
+      ? excludedChars.map(function(c) { return (c.nick || c.name) }).join('、')
+      : ''
     var existingBlock = (options.existing && options.existing.length)
       ? options.existing.map(function(c) { return '- ' + c.author + '：' + c.content }).join('\n')
       : '（暂无）'
@@ -1502,9 +1511,18 @@ async function runXCommentGeneration(user, post, options) {
       '【帖子内容】' + post.content + '\n\n' +
       '【可参与评论的角色】\n' + charBlock + '\n\n' +
       '【已有评论】\n' + existingBlock + '\n\n' +
-      '【任务】生成 ' + count + ' 条新评论，风格自然、简短、符合社交平台习惯（夸赞/玩梗/吐槽/互动皆可）。角色评论要贴合其人设、以及和帖子作者的关系。如果角色有"近期微信聊天记录"且与当前帖子情境相关，可以自然呼应（比如提到刚聊过的事、吐槽对方"这时候还有空发帖"之类），但不要生硬复述或每条都提。如果某个角色标注了【语言要求】，该角色的每一条评论都必须严格使用指定语言撰写，优先级高于其他所有规则，不能违反。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
+      '【任务】生成 ' + count + ' 条新评论。角色评论要贴合其人设、以及和帖子作者的关系。如果角色有"近期微信聊天记录"且与当前帖子情境相关，可以自然呼应（比如提到刚聊过的事、吐槽对方"这时候还有空发帖"之类），但不要生硬复述或每条都提。如果某个角色标注了【语言要求】，该角色的每一条评论都必须严格使用指定语言撰写，优先级高于其他所有规则，不能违反。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
+      (excludedBlock
+        ? '【本次排除的角色，严禁出现】' + excludedBlock + ' 这次不参与评论。不允许任何评论以他们的名字、昵称或账号署名出现，不管是作为"可参与角色"还是路人马甲都不行——哪怕你认识这个名字（比如是知名虚构人物/公众人物），本次生成也绝对不能用这个名字当评论作者。路人评论的作者名必须是普通网名，不能撞上上面这些被排除的名字。\n\n'
+        : '') +
       '【出场频率控制】大多数评论应该来自路人网友，不是每个已建角色都要出现——每个已建角色在这批新评论里最多出现1-2条，不要让同一个角色反复刷屏；已建角色之间也不需要每次都互相回复或搭话，多数情况下各自独立发言就好，只有关系明确很近的角色才偶尔互动一下。\n' +
-      '【去重要求】这' + count + '条评论之间禁止内容、句式、开头相近或重复，每条要有自己的角度和语气（夸赞/吐槽/玩梗/提问/简短感叹/表情包式简短回应等），不要出现两条意思相似的评论。\n\n' +
+      '【去重要求】这' + count + '条评论之间禁止内容、句式、开头相近或重复，每条要有自己的角度和语气，不要出现两条意思相似的评论。\n\n' +
+      '【评论区氛围——重要】结合帖子内容判断基调，再决定评论风格：\n' +
+      '如果帖子内容偏性感/挑逗/晒身材/网红网黄风格，评论区应该还原真实平台上那种发花痴、起哄、玩梗的氛围，而不是礼貌客气的社交评论。大部分评论要短、直给、情绪化，很多可以纯表情符号或几个字，不需要都是完整句子。可参考的语气（不要照抄，写出变体）：\n' +
+      '中文：啊啊啊啊救命/ 这也太会了吧 / 屏幕都要炸了 / 蹲一个更多 / 这颜值犯规了吧 / 已经心动了 / 求同款 / 好家伙这是要犯规 / 直接看傻了 / 🔥🔥🔥 / 😭😭😭 / 芭比Q了\n' +
+      '英文：not you being this fine 😭🔥 / the way you— / sir this should be illegal / I\'m inconsolable rn / camera man is doing God\'s work 📸 / screenshotted / mother is mothering / 🥵🥵🥵 / this is unfair to the rest of us\n' +
+      '也可以混入少量玩梗/吃醋/催更/求私信类评论，以及个别理智吐槽或黑评制造真实感，不要让评论区变成清一色彩虹屁。\n' +
+      '如果帖子内容只是日常碎碎念、没有性感/网黄元素，评论区按正常朋友互动/夸赞/玩梗/吐槽的自然语气写，不要强行往网黄方向硬套。\n\n' +
       '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
       '{"authorId": 数字或null, "author": "评论者昵称", "content": "评论内容", "replyToAuthor": "被回复人昵称，顶级评论留空"}'
 
