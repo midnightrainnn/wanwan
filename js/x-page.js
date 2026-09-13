@@ -903,6 +903,90 @@ async function getXAvailableCharacters() {
   }
 }
 
+// ================= 读取微信近期聊天记录，作为 AI 上下文（与 Instagram 一致的机制） =================
+
+async function findXCharChat(ownerUid, charId) {
+  try {
+    return await db.chats.where('[ownerUid+charId]').equals([ownerUid, charId]).first()
+  } catch (e) {
+    var rows = await db.chats.where('charId').equals(charId).toArray()
+    return rows.find(function(row) { return parseInt(row.ownerUid) === ownerUid })
+  }
+}
+
+function formatXPromptTime(ts) {
+  var date = new Date(ts || Date.now())
+  if (Number.isNaN(date.getTime())) date = new Date()
+  var pad = function(n) { return String(n).padStart(2, '0') }
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes())
+}
+
+function stripXStatusTag(content) {
+  return String(content || '').replace(/<status>[\s\S]*?<\/status>/i, '').trim()
+}
+
+function normalizeXChatMessageForPrompt(msg, user, char, source) {
+  if (!msg) return null
+  if (msg.type === 'image') return null
+  var content = String(msg.content || '').trim()
+  if (!content) return null
+  var parsed = typeof parseMsgType === 'function' ? parseMsgType(content, '') : null
+  if (parsed && (parsed.type === 'real-photo' || parsed.type === 'image')) return null
+  if (/^__IMG__/.test(content)) return null
+  var sender = msg.role === 'user' ? getXUserName(user) : (char.nick || char.name || '角色')
+  var clean = source === 'miss-you' ? stripXStatusTag(content) : content
+  clean = clean.replace(/\s+/g, ' ').trim()
+  if (!clean) return null
+  return { createdAt: msg.createdAt || 0, sender: sender, content: clean.slice(0, 500) }
+}
+
+async function buildXRecentChatContextForChar(ownerUid, user, char, limit) {
+  var chat = await findXCharChat(ownerUid, char.id)
+  if (!chat) return ''
+  var rows = []
+  try {
+    var online = await db.messages.where('chatId').equals(chat.id).sortBy('createdAt')
+    online.forEach(function(m) {
+      var normalized = normalizeXChatMessageForPrompt(m, user, char, 'wechat')
+      if (normalized) rows.push(normalized)
+    })
+  } catch (e2) {}
+  if (db.offlineChats) {
+    try {
+      var offline = await db.offlineChats.where('charId').equals(char.id).toArray()
+      offline
+        .filter(function(m) { return parseInt(m.ownerUid) === ownerUid && parseInt(m.chatId) === parseInt(chat.id) })
+        .forEach(function(m) {
+          var normalized = normalizeXChatMessageForPrompt(m, user, char, 'miss-you')
+          if (normalized) rows.push(normalized)
+        })
+    } catch (e3) {}
+  }
+  rows = rows
+    .filter(function(row) { return row.content })
+    .sort(function(a, b) { return (a.createdAt || 0) - (b.createdAt || 0) })
+    .slice(-(limit || 20))
+  if (!rows.length) return ''
+  var charName = char.nick || char.name || '角色'
+  return '【' + charName + ' 的近期微信聊天记录】\n' + rows.map(function(row) {
+    return '[' + formatXPromptTime(row.createdAt) + '] ' + row.sender + ': ' + row.content
+  }).join('\n')
+}
+
+async function buildXRecentChatContextMap(user, chars) {
+  var map = {}
+  if (!window.db || !db.chats || !db.messages || !Array.isArray(chars) || !chars.length) return map
+  var ownerUid = user && user.id ? parseInt(user.id) : null
+  if (!Number.isFinite(ownerUid)) return map
+  for (var i = 0; i < chars.length; i++) {
+    try {
+      var block = await buildXRecentChatContextForChar(ownerUid, user, chars[i], 20)
+      if (block) map[chars[i].id] = block
+    } catch (e) {}
+  }
+  return map
+}
+
 function parseXJsonArray(raw) {
   if (!raw) return []
   var text = String(raw).trim()
@@ -1051,14 +1135,21 @@ async function generateXFeedPosts(user, charIds, count) {
     var chars = charIds && charIds.length
       ? allChars.filter(function(c) { return charIds.indexOf(c.id) !== -1 })
       : []
+    loading.setStatus('正在读取最近的微信聊天记录...')
+    var chatContextMap = await buildXRecentChatContextMap(user, chars)
     var charBlock = chars.length
-      ? chars.map(function(c) { return '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 300) }).join('\n')
+      ? chars.map(function(c) {
+          var base = '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 300)
+          var chat = chatContextMap[c.id]
+          return chat ? base + '\n  ' + chat.replace(/\n/g, '\n  ') : base
+        }).join('\n')
       : '（未指定角色，全部生成路人推文，authorId 为 null）'
 
     var prompt =
       '你正在为一个模拟 X（Twitter）平台生成时间线内容。\n\n' +
       '【参与角色】\n' + charBlock + '\n\n' +
       '【任务】生成 ' + count + ' 条推文，语气自然、简短、符合社交平台风格，可以有梗、有生活化内容、允许少量话题标签（用 # 开头）。\n' +
+      '如果角色有"近期微信聊天记录"，可以在合适的地方自然呼应或提及最近聊过的内容（比如刚聊完的话题、心情），增强连续性，但不要每条都提、也不要生硬复述。\n' +
       '如果某条推文属于上面列出的角色，authorId 必须填该角色的 id（数字）；否则视为路人推文，authorId 填 null，author 用随机中文或英文网名。\n' +
       '禁止生成用户本人（' + getXUserName(user) + '）发的推文。\n\n' +
       '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
@@ -1234,8 +1325,14 @@ async function runXCommentGeneration(user, post, options) {
   try {
     loading.setStatus('正在整理上下文...')
     var chars = await getXAvailableCharacters()
+    loading.setStatus('正在读取最近的微信聊天记录...')
+    var chatContextMap = await buildXRecentChatContextMap(user, chars)
     var charBlock = chars.length
-      ? chars.map(function(c) { return '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 200) }).join('\n')
+      ? chars.map(function(c) {
+          var base = '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 200)
+          var chat = chatContextMap[c.id]
+          return chat ? base + '\n  ' + chat.replace(/\n/g, '\n  ') : base
+        }).join('\n')
       : '（暂无已建角色，全部使用路人评论）'
     var existingBlock = (options.existing && options.existing.length)
       ? options.existing.map(function(c) { return '- ' + c.author + '：' + c.content }).join('\n')
@@ -1248,7 +1345,7 @@ async function runXCommentGeneration(user, post, options) {
       '【帖子内容】' + post.content + '\n\n' +
       '【可参与评论的角色】\n' + charBlock + '\n\n' +
       '【已有评论】\n' + existingBlock + '\n\n' +
-      '【任务】生成 ' + count + ' 条新评论，风格自然、简短、符合社交平台习惯（夸赞/玩梗/吐槽/互动皆可）。角色评论要贴合其人设、以及和帖子作者的关系。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
+      '【任务】生成 ' + count + ' 条新评论，风格自然、简短、符合社交平台习惯（夸赞/玩梗/吐槽/互动皆可）。角色评论要贴合其人设、以及和帖子作者的关系。如果角色有"近期微信聊天记录"且与当前帖子情境相关，可以自然呼应（比如提到刚聊过的事、吐槽对方"这时候还有空发帖"之类），但不要生硬复述或每条都提。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
       '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
       '{"authorId": 数字或null, "author": "评论者昵称", "content": "评论内容", "replyToAuthor": "被回复人昵称，顶级评论留空"}'
 
