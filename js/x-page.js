@@ -1471,6 +1471,16 @@ async function showXCommentCharSheet(user, post, options) {
   })
 }
 
+function buildXCommentImagePromptParts(post) {
+  var src = String((post && post.image) || '').trim()
+  var isVisual = /^data:image\//i.test(src) || /^https?:\/\//i.test(src)
+  if (!src || !isVisual) return { imageContentParts: [], imageNote: '' }
+  return {
+    imageContentParts: [{ type: 'image_url', image_url: { url: src } }],
+    imageNote: '【帖子配图】已附带这张帖子的实际配图，请结合图片里真实的内容生成评论（具体夸/吐槽图片里的东西、角度、氛围等），不要脱离图片内容瞎编。\n\n'
+  }
+}
+
 async function runXCommentGeneration(user, post, options) {
   options = options || {}
   var loading = showXGeneratingModal('生成评论')
@@ -1503,12 +1513,14 @@ async function runXCommentGeneration(user, post, options) {
     var existingBlock = (options.existing && options.existing.length)
       ? options.existing.map(function(c) { return '- ' + c.author + '：' + c.content }).join('\n')
       : '（暂无）'
+    var imageParts = buildXCommentImagePromptParts(post)
 
     var count = Number(options.count) > 0 ? Number(options.count) : 25
     var prompt =
       '你正在为一条 X（Twitter）帖子生成评论区互动。\n\n' +
       '【帖子作者】' + post.name + '\n' +
       '【帖子内容】' + post.content + '\n\n' +
+      imageParts.imageNote +
       '【可参与评论的角色】\n' + charBlock + '\n\n' +
       '【已有评论】\n' + existingBlock + '\n\n' +
       '【任务】生成 ' + count + ' 条新评论。角色评论要贴合其人设、以及和帖子作者的关系。如果角色有"近期微信聊天记录"且与当前帖子情境相关，可以自然呼应（比如提到刚聊过的事、吐槽对方"这时候还有空发帖"之类），但不要生硬复述或每条都提。如果某个角色标注了【语言要求】，该角色的每一条评论都必须严格使用指定语言撰写，优先级高于其他所有规则，不能违反。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
@@ -1527,7 +1539,10 @@ async function runXCommentGeneration(user, post, options) {
       '{"authorId": 数字或null, "author": "评论者昵称", "content": "评论内容", "replyToAuthor": "被回复人昵称，顶级评论留空"}'
 
     loading.setStatus('AI 正在生成评论...')
-    var raw = await window.callAI([{ role: 'user', content: prompt }], { temperature: 0.9 })
+    var userMessage = imageParts.imageContentParts.length
+      ? { role: 'user', content: [{ type: 'text', text: prompt }].concat(imageParts.imageContentParts) }
+      : { role: 'user', content: prompt }
+    var raw = await window.callAI([userMessage], { temperature: 0.9 })
     var items = parseXJsonArray(raw)
     if (!items.length) throw new Error('生成结果为空，请重试')
 
