@@ -778,6 +778,20 @@ function buildXPost(data) {
           '</div>' +
         '</div>'
       : '<div class="x-post-image"><img src="' + xEscape(data.image) + '" alt="" loading="lazy"></div>'
+  var quoteHTML = data.quote
+    ? '<div class="x-post-quote">' +
+        '<div class="x-post-quote-header">' +
+          '<div class="x-post-quote-avatar">' +
+            (data.quote.avatar
+              ? '<img src="' + xEscape(data.quote.avatar) + '" alt="">'
+              : buildXDefaultAvatarHTML(data.quote.name || '')) +
+          '</div>' +
+          '<span class="x-post-quote-name">' + xEscape(data.quote.name || '') + '</span>' +
+          '<span class="x-post-quote-handle">' + xEscape(data.quote.handle || '') + '</span>' +
+        '</div>' +
+        '<div class="x-post-quote-content">' + formatXContent(data.quote.content || '') + '</div>' +
+      '</div>'
+    : ''
   var liked = !!data.liked
   var timeLabel = data.time || (data.createdAt ? formatXRelativeTime(data.createdAt) : '')
 
@@ -795,6 +809,7 @@ function buildXPost(data) {
       '</div>' +
       '<div class="x-post-content">' + contentHTML + '</div>' +
       imageHTML +
+      quoteHTML +
       '<div class="x-post-actions">' +
         '<button class="x-post-action comment" data-action="comment"><svg viewBox="0 0 24 24"><g><path d="M1.751 10c0-4.42 3.584-8.005 8.005-8.005h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.005zm8.005-6.005c-3.317 0-6.005 2.69-6.005 6.005 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"></path></g></svg><span>' + formatXNumber(data.comments) + '</span></button>' +
         '<button class="x-post-action retweet" data-action="retweet"><svg viewBox="0 0 24 24"><g><path d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.791-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.791 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"></path></g></svg><span>' + formatXNumber(data.retweets) + '</span></button>' +
@@ -1031,6 +1046,34 @@ function getXCharacterLanguageNote(c) {
     return '\n  【语言要求·最高优先级】该角色在 X 上发布的所有推文和评论必须使用英文（English）撰写，不需要附带中文翻译，禁止使用中文。'
   }
   return ''
+}
+
+// ================= 角色关系强度（用于评论区出场权重） =================
+function getXRelationText(char, targetCharId) {
+  if (targetCharId == null) return '(未设定)'
+  var rels = char && Array.isArray(char.relations) ? char.relations : []
+  var rel = rels.find(function(r) { return String(r.charId) === String(targetCharId) })
+  if (!rel) return '(未设定)'
+  return (rel.type || '关系') + (rel.desc ? '（' + rel.desc + '）' : '')
+}
+
+// ================= 粉丝量级（按角色类型缩放互动数据，不是所有账号一个流量级别） =================
+function getXEngagementScale(authorChar) {
+  if (authorChar && authorChar.type === 'char') {
+    // 主角色：网红/名人级账号
+    return { likes: [2000, 30000], comments: [100, 1500], retweets: [50, 2000], views: [20000, 300000] }
+  }
+  if (authorChar && authorChar.type === 'npc') {
+    // NPC：普通活跃用户
+    return { likes: [50, 800], comments: [5, 60], retweets: [0, 40], views: [1000, 8000] }
+  }
+  // 路人：小透明账号
+  return { likes: [0, 500], comments: [0, 40], retweets: [0, 30], views: [500, 5000] }
+}
+
+function xRandomInRange(range) {
+  var min = range[0], max = range[1]
+  return min + Math.floor(Math.random() * (max - min + 1))
 }
 
 // ================= 供微信聊天读取「最近 X 动态」（与 IG→微信 的方向相反，打通反方向） =================
@@ -1299,17 +1342,27 @@ async function generateXFeedPosts(user, charIds, count, allowImages) {
         }).join('\n')
       : '（未指定角色，全部生成路人推文，authorId 为 null）'
 
+    var existingFeed = await getXFeed(user)
+    var quotableList = existingFeed.slice(0, 10).map(function(p) {
+      return { name: p.name, handle: p.handle, avatar: p.avatar || '', content: String(p.content || '').slice(0, 140), image: '' }
+    })
+    var quotableBlock = quotableList.length
+      ? quotableList.map(function(q, idx) { return idx + '. ' + q.name + '：' + q.content }).join('\n')
+      : '（暂无可引用的历史推文）'
+
     var prompt =
       '你正在为一个模拟 X（Twitter）平台生成时间线内容。\n\n' +
       '【参与角色】\n' + charBlock + '\n\n' +
+      '【可供转发引用的历史推文（编号）】\n' + quotableBlock + '\n\n' +
       '【任务】生成 ' + count + ' 条推文，语气自然、简短、符合社交平台风格，可以有梗、有生活化内容、允许少量话题标签（用 # 开头）。\n' +
       '如果角色有"近期微信聊天记录"，可以在合适的地方自然呼应或提及最近聊过的内容（比如刚聊完的话题、心情），增强连续性，但不要每条都提、也不要生硬复述。\n' +
       '如果某个角色标注了【语言要求】，该角色的每一条推文都必须严格使用指定语言撰写，优先级高于其他所有规则，不能违反。\n' +
       '如果某条推文属于上面列出的角色，authorId 必须填该角色的 id（数字）；否则视为路人推文，authorId 填 null，author 用随机中文或英文网名。\n' +
       '禁止生成用户本人（' + getXUserName(user) + '）发的推文。\n' +
-      '如果某条推文带图且内容明显是福利/网黄向内容，可以偶尔（不要太频繁，几条里最多1条）把 locked 设为 true，表示这是一条"订阅可见"的付费专属内容，配图会被打码，文案可以配合写成"订阅解锁""专属福利"这类引导语气；其余情况 locked 一律为 false。\n\n' +
+      '如果某条推文带图且内容明显是福利/网黄向内容，可以偶尔（不要太频繁，几条里最多1条）把 locked 设为 true，表示这是一条"订阅可见"的付费专属内容，配图会被打码，文案可以配合写成"订阅解锁""专属福利"这类引导语气；其余情况 locked 一律为 false。\n' +
+      '可以让个别推文变成"转发锐评"（quote tweet）：从上面【可供转发引用的历史推文】里选一条，把它的编号填进 quoteOfIndex，content 写这条转发时附带的锐评/吐槽/玩梗，不要复述原文内容。没有转发的推文 quoteOfIndex 填 null。转发的比例不用高，几条里有1条左右即可，如果历史推文列表是空的就不要转发。\n\n' +
       '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
-      '{"authorId": 数字或null, "author": "作者昵称", "content": "推文正文", "hasImage": true或false, "imageDesc": "若hasImage为true，用于生成配图的简短英文描述", "locked": true或false}'
+      '{"authorId": 数字或null, "author": "作者昵称", "content": "推文正文", "hasImage": true或false, "imageDesc": "若hasImage为true，用于生成配图的简短英文描述", "locked": true或false, "quoteOfIndex": 数字或null}'
 
     loading.setStatus('AI 正在生成推文...')
     var raw = await window.callAI([{ role: 'user', content: prompt }], { temperature: 0.9 })
@@ -1328,6 +1381,8 @@ async function generateXFeedPosts(user, charIds, count, allowImages) {
         image = await generateXPostImage(item.imageDesc || item.content || '', i)
       }
       var authorAccount = authorChar && authorChar.identity && authorChar.identity.account
+      var scale = getXEngagementScale(authorChar)
+      var quote = (item.quoteOfIndex != null && quotableList[item.quoteOfIndex]) ? quotableList[item.quoteOfIndex] : null
       feed.unshift({
         id: genXPostId(),
         authorId: authorChar ? authorChar.id : null,
@@ -1339,13 +1394,14 @@ async function generateXFeedPosts(user, charIds, count, allowImages) {
         image: image,
         locked: !!(item.locked && image),
         unlocked: false,
+        quote: quote,
         createdAt: Date.now() - i * 60000,
         time: i === 0 ? '刚刚' : (i + '分钟'),
-        comments: Math.floor(Math.random() * 40),
-        retweets: Math.floor(Math.random() * 30),
-        likes: Math.floor(Math.random() * 500),
+        comments: xRandomInRange(scale.comments),
+        retweets: xRandomInRange(scale.retweets),
+        likes: xRandomInRange(scale.likes),
         liked: false,
-        views: Math.floor(Math.random() * 5000)
+        views: xRandomInRange(scale.views)
       })
     }
     await saveXFeed(user, feed)
@@ -1642,9 +1698,13 @@ async function runXCommentGeneration(user, post, options) {
       : []
     loading.setStatus('正在读取最近的微信聊天记录...')
     var chatContextMap = await buildXRecentChatContextMap(user, chars)
+    var postAuthorId = post.authorId
     var charBlock = chars.length
       ? chars.map(function(c) {
           var base = '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 200)
+          if (postAuthorId != null && String(postAuthorId) !== String(c.id)) {
+            base += '\n  与发帖人关系：' + getXRelationText(c, postAuthorId)
+          }
           var chat = chatContextMap[c.id]
           if (chat) base += '\n  ' + chat.replace(/\n/g, '\n  ')
           base += getXCharacterLanguageNote(c)
@@ -1672,6 +1732,7 @@ async function runXCommentGeneration(user, post, options) {
         ? '【本次排除的角色，严禁出现】' + excludedBlock + ' 这次不参与评论。不允许任何评论以他们的名字、昵称或账号署名出现，不管是作为"可参与角色"还是路人马甲都不行——哪怕你认识这个名字（比如是知名虚构人物/公众人物），本次生成也绝对不能用这个名字当评论作者。路人评论的作者名必须是普通网名，不能撞上上面这些被排除的名字。\n\n'
         : '') +
       '【出场频率控制】大多数评论应该来自路人网友，不是每个已建角色都要出现——每个已建角色在这批新评论里最多出现1-2条，不要让同一个角色反复刷屏；已建角色之间也不需要每次都互相回复或搭话，多数情况下各自独立发言就好，只有关系明确很近的角色才偶尔互动一下。\n' +
+      '【关系权重】角色是否出现、评论语气亲密与否，要参考上面标注的"与发帖人关系"：跟发帖人关系明确（恋人/好友/家人等）的角色，出现和互动更合理、语气可以更亲近或更敢开玩笑；关系写着"(未设定)"的角色，跟发帖人不熟，更适合演成路人吃瓜心态（评价、调侃、旁观），不要写得像多年好友一样自来熟。\n' +
       '【去重要求】这' + count + '条评论之间禁止内容、句式、开头相近或重复，每条要有自己的角度和语气，不要出现两条意思相似的评论。\n\n' +
       '【评论区氛围——重要】先判断帖子本身的调性，再照着对应的例子模仿语感（不是照抄例句，是学它的说话方式、节奏、直白程度），禁止写得比这些例子更委婉、更客气：\n\n' +
       '如果帖子偏性感/晒身材/网黄福利向，模仿这种真实评论区的语感（长短混合，很多是病句、不完整句、纯发泄）：\n' +
