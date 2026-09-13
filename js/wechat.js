@@ -7765,6 +7765,14 @@ async function buildChatSystem(char, loreCtx, charName, userName, userNick, stic
     }
   } catch (e) {}
 
+  let xActivityBlock = ''
+  try {
+    if (window.getXActivityContextForChar && _wechatUser && char) {
+      const xCtx = await window.getXActivityContextForChar(_wechatUser, char, 10)
+      if (xCtx) xActivityBlock = `\n\n${xCtx}\n（如果和当前对话相关，可以自然提起或吐槽，不要每次都提）`
+    }
+  } catch (e) {}
+
   const loreAfterBlock = loreSeg.after
     ? `# 【补充世界观设定】\n${loreSeg.after}\n\n---\n\n`
     : ''
@@ -7773,6 +7781,7 @@ async function buildChatSystem(char, loreCtx, charName, userName, userNick, stic
     buildSystemPart1(char, charName, loreSeg.middle, loreSeg.before) +
     buildSystemMemoryPart(memoryCtx) +
     part2 +
+    xActivityBlock +
     loreAfterBlock +
     buildSystemPart3(charName, userName, stickerNames, imageGenEnabled) +
     buildSystemPart4(charName, userName)

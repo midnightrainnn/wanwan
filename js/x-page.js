@@ -996,6 +996,32 @@ function getXCharacterLanguageNote(c) {
   return ''
 }
 
+// ================= 供微信聊天读取「最近 X 动态」（与 IG→微信 的方向相反，打通反方向） =================
+// 直接读 db.config，不走 getXFeed，避免对从未用过 X 的用户触发首次访问的演示数据播种
+window.getXActivityContextForChar = async function(user, char, limit) {
+  limit = limit || 10
+  if (!user || user.id == null || !char) return ''
+  try {
+    if (!window.db || !db.config) return ''
+    var row = await db.config.get(X_FEED_PREFIX + user.id)
+    var feed = (row && Array.isArray(row.value)) ? row.value : []
+    if (!feed.length) return ''
+    var relevant = feed
+      .filter(function(p) { return p.authorId === char.id || p.authorId === user.id })
+      .slice(0, limit)
+    if (!relevant.length) return ''
+    var charName = char.nick || char.name || '角色'
+    var userName = getXUserName(user)
+    return '【X（Twitter）最近动态，仅供参考，角色不一定已经看到】\n' + relevant.map(function(p) {
+      var who = p.authorId === user.id ? userName : charName
+      var t = p.time || formatXRelativeTime(p.createdAt)
+      return '[' + t + '] ' + who + ' 发布: ' + p.content
+    }).join('\n')
+  } catch (e) {
+    return ''
+  }
+}
+
 function parseXJsonArray(raw) {
   if (!raw) return []
   var text = String(raw).trim()
