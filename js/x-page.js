@@ -302,6 +302,7 @@ function renderXCompose(user) {
       '<div class="x-compose-tools">' +
         '<button class="x-compose-tool" id="x-compose-tool-image" type="button"><i class="fa-solid fa-image"></i></button>' +
         '<button class="x-compose-tool" id="x-compose-tool-hashtag" type="button"><i class="fa-solid fa-hashtag"></i></button>' +
+        '<button class="x-compose-tool" id="x-compose-tool-lock" type="button" title="设为专属内容（配图会打码，需要手动解锁查看）"><i class="fa-solid fa-lock"></i></button>' +
       '</div>' +
     '</div>'
 
@@ -344,6 +345,15 @@ function renderXCompose(user) {
     })
   }
 
+  var lockBtn = page.querySelector('#x-compose-tool-lock')
+  if (lockBtn) {
+    lockBtn.addEventListener('click', function() {
+      var next = page.dataset.locked === '1' ? '0' : '1'
+      page.dataset.locked = next
+      lockBtn.classList.toggle('active', next === '1')
+    })
+  }
+
   var hashtagBtn = page.querySelector('#x-compose-tool-hashtag')
   if (hashtagBtn) {
     hashtagBtn.addEventListener('click', function() {
@@ -367,6 +377,7 @@ async function publishXCompose(page, user) {
   var input = page.querySelector('.x-compose-input')
   var text = input ? input.textContent.trim() : ''
   var image = page.dataset.imageValue || ''
+  var locked = page.dataset.locked === '1' && !!image
   if (!text && !image) {
     window.toast && window.toast('说点什么吧')
     return
@@ -383,6 +394,8 @@ async function publishXCompose(page, user) {
       verified: false,
       content: text,
       image: image,
+      locked: locked,
+      unlocked: false,
       createdAt: Date.now(),
       time: '刚刚',
       comments: 0,
@@ -752,9 +765,19 @@ function buildXPost(data) {
   var avatarHTML = data.avatar
     ? '<img src="' + xEscape(data.avatar) + '" alt="">'
     : buildXDefaultAvatarHTML(data.name || '')
-  var imageHTML = data.image
-    ? '<div class="x-post-image"><img src="' + xEscape(data.image) + '" alt="" loading="lazy"></div>'
-    : ''
+  var isLocked = !!data.image && !!data.locked && !data.unlocked
+  var imageHTML = !data.image
+    ? ''
+    : isLocked
+      ? '<div class="x-post-image x-post-image-locked">' +
+          '<img src="' + xEscape(data.image) + '" alt="" loading="lazy">' +
+          '<div class="x-post-lock-overlay">' +
+            '<i class="fa-solid fa-lock"></i>' +
+            '<div class="x-post-lock-text">订阅可见内容</div>' +
+            '<button type="button" class="x-post-unlock-btn" data-action="unlock">解锁查看</button>' +
+          '</div>' +
+        '</div>'
+      : '<div class="x-post-image"><img src="' + xEscape(data.image) + '" alt="" loading="lazy"></div>'
   var liked = !!data.liked
   var timeLabel = data.time || (data.createdAt ? formatXRelativeTime(data.createdAt) : '')
 
@@ -1120,11 +1143,29 @@ function bindXFeedEvents(page, user, options) {
     if (options.noNavigate) return
     postEl.addEventListener('click', async function(e) {
       if (e.target.closest('.x-post-actions')) return
+      if (e.target.closest('.x-post-unlock-btn')) return
       var id = postEl.dataset.postId
       if (!id) return
       var feed = await getXFeed(user)
       var post = feed.find(function(p) { return String(p.id) === String(id) })
       if (post) showXPostDetail(user, post)
+    })
+  })
+
+  scope.querySelectorAll('.x-post-unlock-btn').forEach(function(button) {
+    button.addEventListener('click', async function(e) {
+      e.preventDefault()
+      e.stopPropagation()
+      var postEl = button.closest('.x-post')
+      var id = postEl && postEl.dataset.postId
+      if (!id) return
+      var feed = await getXFeed(user)
+      var post = feed.find(function(p) { return String(p.id) === String(id) })
+      if (!post) return
+      post.unlocked = true
+      await saveXFeed(user, feed)
+      var wrap = postEl.querySelector('.x-post-image')
+      if (wrap) wrap.outerHTML = '<div class="x-post-image"><img src="' + xEscape(post.image) + '" alt="" loading="lazy"></div>'
     })
   })
 
@@ -1265,9 +1306,10 @@ async function generateXFeedPosts(user, charIds, count, allowImages) {
       '如果角色有"近期微信聊天记录"，可以在合适的地方自然呼应或提及最近聊过的内容（比如刚聊完的话题、心情），增强连续性，但不要每条都提、也不要生硬复述。\n' +
       '如果某个角色标注了【语言要求】，该角色的每一条推文都必须严格使用指定语言撰写，优先级高于其他所有规则，不能违反。\n' +
       '如果某条推文属于上面列出的角色，authorId 必须填该角色的 id（数字）；否则视为路人推文，authorId 填 null，author 用随机中文或英文网名。\n' +
-      '禁止生成用户本人（' + getXUserName(user) + '）发的推文。\n\n' +
+      '禁止生成用户本人（' + getXUserName(user) + '）发的推文。\n' +
+      '如果某条推文带图且内容明显是福利/网黄向内容，可以偶尔（不要太频繁，几条里最多1条）把 locked 设为 true，表示这是一条"订阅可见"的付费专属内容，配图会被打码，文案可以配合写成"订阅解锁""专属福利"这类引导语气；其余情况 locked 一律为 false。\n\n' +
       '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
-      '{"authorId": 数字或null, "author": "作者昵称", "content": "推文正文", "hasImage": true或false, "imageDesc": "若hasImage为true，用于生成配图的简短英文描述"}'
+      '{"authorId": 数字或null, "author": "作者昵称", "content": "推文正文", "hasImage": true或false, "imageDesc": "若hasImage为true，用于生成配图的简短英文描述", "locked": true或false}'
 
     loading.setStatus('AI 正在生成推文...')
     var raw = await window.callAI([{ role: 'user', content: prompt }], { temperature: 0.9 })
@@ -1295,6 +1337,8 @@ async function generateXFeedPosts(user, charIds, count, allowImages) {
         verified: !!authorChar,
         content: item.content || '',
         image: image,
+        locked: !!(item.locked && image),
+        unlocked: false,
         createdAt: Date.now() - i * 60000,
         time: i === 0 ? '刚刚' : (i + '分钟'),
         comments: Math.floor(Math.random() * 40),
@@ -1352,6 +1396,16 @@ async function showXPostDetail(user, post) {
           ? renderXCommentsHTML(comments)
           : '<div class="x-detail-comments-empty">暂无评论<br><button class="btn-ghost btn-sm" id="x-detail-generate-inline" type="button">生成评论</button></div>') +
       '</div>' +
+    '</div>' +
+    '<div class="x-detail-composer">' +
+      '<div class="x-detail-reply-target" id="x-detail-reply-target" hidden>' +
+        '<span>回复 @<span id="x-detail-reply-target-name"></span></span>' +
+        '<button type="button" id="x-detail-reply-cancel" aria-label="取消回复"><i class="fa fa-times"></i></button>' +
+      '</div>' +
+      '<div class="x-detail-composer-row">' +
+        '<input type="text" id="x-detail-comment-input" class="x-detail-comment-input" placeholder="发布你的回复" maxlength="280">' +
+        '<button type="button" id="x-detail-comment-send" class="x-detail-comment-send-btn">发送</button>' +
+      '</div>' +
     '</div>'
 
   if (window.openPage) {
@@ -1374,6 +1428,8 @@ async function showXPostDetail(user, post) {
   var genInline = page.querySelector('#x-detail-generate-inline')
   if (genInline) genInline.addEventListener('click', function() { generateXPostComments(user, post) })
 
+  bindXDetailComposer(page, user, post)
+
   bindXFeedEvents(page, user, {
     noNavigate: true,
     onDeleted: async function() {
@@ -1392,7 +1448,7 @@ function renderXCommentsHTML(comments) {
     var replyHTML = c.replyToAuthor
       ? '<div class="x-comment-reply-to">回复 @' + xEscape(c.replyToAuthor) + '</div>'
       : ''
-    return '<div class="x-comment-item">' +
+    return '<div class="x-comment-item" data-comment-id="' + xEscape(c.id || '') + '">' +
       '<div class="x-comment-avatar">' + avatarHTML + '</div>' +
       '<div class="x-comment-body">' +
         '<div class="x-comment-header">' +
@@ -1401,10 +1457,98 @@ function renderXCommentsHTML(comments) {
         '</div>' +
         replyHTML +
         '<div class="x-comment-content">' + formatXContent(c.content || '') + '</div>' +
-        '<div class="x-comment-likes"><i class="fa-regular fa-heart"></i> ' + formatXNumber(c.likes || 0) + '</div>' +
+        '<div class="x-comment-footer">' +
+          '<div class="x-comment-likes"><i class="fa-regular fa-heart"></i> ' + formatXNumber(c.likes || 0) + '</div>' +
+          '<button type="button" class="x-comment-reply-btn" data-author="' + xEscape(c.author || '') + '">回复</button>' +
+        '</div>' +
       '</div>' +
     '</div>'
   }).join('')
+}
+
+async function postXUserComment(user, post, text, replyToAuthor) {
+  text = String(text || '').trim()
+  if (!text) return null
+  var profile = await getXProfile(user)
+  var comment = {
+    id: genXPostId(),
+    authorId: user.id,
+    author: getXProfileName(user, profile),
+    avatar: (profile && profile.avatar) || user.avatar || '',
+    content: text,
+    replyToAuthor: replyToAuthor || '',
+    likes: 0,
+    time: formatXRelativeTime(Date.now())
+  }
+  var comments = await getXPostComments(user, post.id)
+  comments.push(comment)
+  await saveXPostComments(user, post.id, comments)
+
+  var feed = await getXFeed(user)
+  var stored = feed.find(function(p) { return String(p.id) === String(post.id) })
+  if (stored) {
+    stored.comments = comments.length
+    await saveXFeed(user, feed)
+    post.comments = comments.length
+  }
+  return comments
+}
+
+function bindXDetailComposer(page, user, post) {
+  var input = page.querySelector('#x-detail-comment-input')
+  var sendBtn = page.querySelector('#x-detail-comment-send')
+  var replyBar = page.querySelector('#x-detail-reply-target')
+  var replyNameEl = page.querySelector('#x-detail-reply-target-name')
+  var replyCancel = page.querySelector('#x-detail-reply-cancel')
+  var commentsList = page.querySelector('#x-detail-comments')
+  var replyTarget = ''
+
+  function setReplyTarget(author) {
+    replyTarget = author || ''
+    if (replyBar) replyBar.hidden = !replyTarget
+    if (replyNameEl) replyNameEl.textContent = replyTarget
+    if (input) input.focus()
+  }
+
+  // 用事件委托绑在列表容器上，评论列表重新渲染后无需重新绑定每个"回复"按钮
+  if (commentsList) {
+    commentsList.addEventListener('click', function(e) {
+      var btn = e.target.closest('.x-comment-reply-btn')
+      if (btn) setReplyTarget(btn.dataset.author || '')
+    })
+  }
+  if (replyCancel) replyCancel.addEventListener('click', function() { setReplyTarget('') })
+
+  async function send() {
+    var text = input ? input.value.trim() : ''
+    if (!text) return
+    if (sendBtn) sendBtn.disabled = true
+    try {
+      var comments = await postXUserComment(user, post, text, replyTarget)
+      if (!comments) return
+      if (input) input.value = ''
+      setReplyTarget('')
+      var listEl = page.querySelector('#x-detail-comments')
+      if (listEl) listEl.innerHTML = renderXCommentsHTML(comments)
+      var scrollEl = page.querySelector('.x-detail-scroll')
+      if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight
+    } catch (e) {
+      console.error('发布 X 评论失败：', e)
+      window.toast && window.toast('发布失败：' + (e.message || e))
+    } finally {
+      if (sendBtn) sendBtn.disabled = false
+    }
+  }
+
+  if (sendBtn) sendBtn.addEventListener('click', send)
+  if (input) {
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        send()
+      }
+    })
+  }
 }
 
 async function generateXPostComments(user, post) {
