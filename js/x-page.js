@@ -2,6 +2,8 @@
 
 var X_SESSION_UID_KEY = 'wanwan_x_uid'
 var X_PROFILE_PREFIX = 'wanwan_x_profile_'
+var X_FEED_PREFIX = 'wanwan_x_feed_'
+var X_COMMENTS_PREFIX = 'wanwan_x_comments_'
 
 window.showXPage = async function() {
   var user = await getXSessionUser()
@@ -9,12 +11,14 @@ window.showXPage = async function() {
     showXLoginPage()
     return
   }
-  renderXPage(user)
+  await renderXPage(user)
 }
 
-function renderXPage(user) {
+async function renderXPage(user) {
   var existing = document.getElementById('x-page')
   if (existing) existing.remove()
+
+  var feed = await getXFeed(user)
 
   var page = document.createElement('div')
   page.id = 'x-page'
@@ -39,26 +43,20 @@ function renderXPage(user) {
       '</div>' +
     '</div>' +
 
-    '<div class="x-feed">' +
-      buildXPost({
-        avatar: 'img/wanwan.png',
-        name: '弯弯协会',
-        verified: true,
-        handle: '@Wanwan_Offical',
-        time: '2小时',
-        content: '产品上线请多多关注。#AI #Wanwan',
-        comments: 847,
-        retweets: 203,
-        likes: 3654,
-        views: '28.6万',
-        bookmarks: 0,
-        shares: 0
-      }) +
+    '<div class="x-feed" id="x-feed-list">' +
+      (feed.length
+        ? feed.map(function(post) { return buildXPost(post) }).join('')
+        : '<div class="x-feed-empty">还没有动态<br>点右下角发一条，或用魔法棒生成一些</div>') +
     '</div>' +
 
-      '<button class="x-fab" onclick="showXCompose()">' +
-      '<i class="fi fi-rr-plus"></i>' +
-    '</button>' +
+    '<div class="x-fab-group">' +
+      '<button class="x-fab x-fab-secondary" onclick="showXGenerateSheet()" aria-label="生成动态">' +
+        '<i class="fa-solid fa-wand-magic-sparkles"></i>' +
+      '</button>' +
+      '<button class="x-fab" onclick="showXCompose()" aria-label="发帖">' +
+        '<i class="fi fi-rr-plus"></i>' +
+      '</button>' +
+    '</div>' +
 
     '<div class="x-bottombar">' +
       buildXBottomBar() +
@@ -119,20 +117,7 @@ function renderXPage(user) {
     })
   })
 
-  var likeButtons = page.querySelectorAll('.x-post-action.like')
-  likeButtons.forEach(function(button) {
-    button.addEventListener('click', function(e) {
-      e.preventDefault()
-      e.stopPropagation()
-      var liked = button.dataset.liked === '1'
-      var baseCount = Number(button.dataset.baseCount || button.dataset.count || 0)
-      var count = Math.max(baseCount, Number(button.dataset.count || baseCount) + (liked ? -1 : 1))
-      button.dataset.count = String(count)
-      button.dataset.liked = liked ? '0' : '1'
-      button.classList.toggle('liked', !liked)
-      button.innerHTML = getXHeartSvg(!liked) + '<span>' + formatXNumber(count) + '</span>'
-    })
-  })
+  bindXFeedEvents(page, user)
 }
 
 async function showXProfilePage(user) {
@@ -282,6 +267,7 @@ function renderXCompose(user) {
   var page = document.createElement('div')
   page.id = 'x-compose'
   page.className = 'full-page x-compose-page'
+  page.dataset.imageValue = ''
 
   page.innerHTML =
     '<div class="x-compose-header">' +
@@ -290,13 +276,18 @@ function renderXCompose(user) {
     '</div>' +
     '<div class="x-compose-body">' +
       '<div class="x-compose-avatar">' + getXAvatarHTML(user) + '</div>' +
-      '<div class="x-compose-input" contenteditable="true" data-placeholder="有什么新鲜事？"></div>' +
+      '<div class="x-compose-main">' +
+        '<div class="x-compose-input" contenteditable="true" data-placeholder="有什么新鲜事？"></div>' +
+        '<div class="x-compose-image-preview" id="x-compose-image-preview" hidden>' +
+          '<img id="x-compose-image-img" src="" alt="">' +
+          '<button class="x-compose-image-remove" type="button" aria-label="移除图片"><i class="fa-solid fa-xmark"></i></button>' +
+        '</div>' +
+      '</div>' +
     '</div>' +
     '<div class="x-compose-footer">' +
       '<div class="x-compose-tools">' +
-        '<button class="x-compose-tool"><i class="fa-solid fa-image"></i></button>' +
-        '<button class="x-compose-tool"><i class="fa-solid fa-camera"></i></button>' +
-        '<button class="x-compose-tool"><i class="fa-solid fa-hashtag"></i></button>' +
+        '<button class="x-compose-tool" id="x-compose-tool-image" type="button"><i class="fa-solid fa-image"></i></button>' +
+        '<button class="x-compose-tool" id="x-compose-tool-hashtag" type="button"><i class="fa-solid fa-hashtag"></i></button>' +
       '</div>' +
     '</div>'
 
@@ -313,6 +304,90 @@ function renderXCompose(user) {
       e.stopPropagation()
       closeXCompose()
     })
+  }
+
+  var imageBtn = page.querySelector('#x-compose-tool-image')
+  if (imageBtn) {
+    imageBtn.addEventListener('click', function() {
+      pickXImage(function(imageUrl) {
+        if (!imageUrl) return
+        page.dataset.imageValue = imageUrl
+        var preview = page.querySelector('#x-compose-image-preview')
+        var img = page.querySelector('#x-compose-image-img')
+        if (img) img.src = imageUrl
+        if (preview) preview.hidden = false
+      })
+    })
+  }
+
+  var removeBtn = page.querySelector('.x-compose-image-remove')
+  if (removeBtn) {
+    removeBtn.addEventListener('click', function(e) {
+      e.stopPropagation()
+      page.dataset.imageValue = ''
+      var preview = page.querySelector('#x-compose-image-preview')
+      if (preview) preview.hidden = true
+    })
+  }
+
+  var hashtagBtn = page.querySelector('#x-compose-tool-hashtag')
+  if (hashtagBtn) {
+    hashtagBtn.addEventListener('click', function() {
+      var input = page.querySelector('.x-compose-input')
+      if (!input) return
+      input.focus()
+      try { document.execCommand('insertText', false, '#') } catch (e) { input.textContent += '#' }
+    })
+  }
+
+  var publishBtn = page.querySelector('.x-compose-publish')
+  if (publishBtn) {
+    publishBtn.addEventListener('click', function() {
+      publishXCompose(page, user)
+    })
+  }
+}
+
+async function publishXCompose(page, user) {
+  if (page.dataset.publishing === '1') return
+  var input = page.querySelector('.x-compose-input')
+  var text = input ? input.textContent.trim() : ''
+  var image = page.dataset.imageValue || ''
+  if (!text && !image) {
+    window.toast && window.toast('说点什么吧')
+    return
+  }
+  page.dataset.publishing = '1'
+  try {
+    var profile = await getXProfile(user)
+    var post = {
+      id: genXPostId(),
+      authorId: user.id,
+      name: getXProfileName(user, profile),
+      handle: getXProfileHandle(user, profile),
+      avatar: (profile && profile.avatar) || user.avatar || '',
+      verified: false,
+      content: text,
+      image: image,
+      createdAt: Date.now(),
+      time: '刚刚',
+      comments: 0,
+      retweets: 0,
+      likes: 0,
+      liked: false,
+      views: 0
+    }
+    var feed = await getXFeed(user)
+    feed.unshift(post)
+    await saveXFeed(user, feed)
+    closeXCompose()
+    await renderXPage(user)
+    window.toast && window.toast('已发布')
+  } catch (e) {
+    console.error('发布 X 帖子失败：', e)
+    window.toast && window.toast('发布失败：' + (e.message || e))
+  } finally {
+    page.dataset.publishing = '0'
   }
 }
 
@@ -396,7 +471,7 @@ async function renderXLoginUsers(page) {
       setXSessionUser(user)
       var returnToProfile = page.dataset.returnToProfile === '1'
       closeXLoginPage(true)
-      renderXPage(user)
+      await renderXPage(user)
       if (returnToProfile) showXProfilePage(user)
     })
   })
@@ -663,8 +738,13 @@ function buildXPost(data) {
   var avatarHTML = data.avatar
     ? '<img src="' + xEscape(data.avatar) + '" alt="">'
     : buildXDefaultAvatarHTML(data.name || '')
+  var imageHTML = data.image
+    ? '<div class="x-post-image"><img src="' + xEscape(data.image) + '" alt="" loading="lazy"></div>'
+    : ''
+  var liked = !!data.liked
+  var timeLabel = data.time || (data.createdAt ? formatXRelativeTime(data.createdAt) : '')
 
-  return '<div class="x-post">' +
+  return '<div class="x-post" data-post-id="' + xEscape(data.id || '') + '">' +
     '<div class="x-post-avatar">' + avatarHTML + '</div>' +
     '<div class="x-post-body">' +
       '<div class="x-post-header">' +
@@ -673,17 +753,18 @@ function buildXPost(data) {
           '<span class="x-post-verified"><svg viewBox="0 0 24 24"><g><path d="M22.25 12c0-1.43-.88-2.67-2.19-3.34.46-1.39.2-2.9-.81-3.91s-2.52-1.27-3.91-.81c-.66-1.31-1.91-2.19-3.34-2.19s-2.67.88-3.33 2.19c-1.4-.46-2.91-.2-3.92.81s-1.26 2.52-.8 3.91c-1.31.67-2.2 1.91-2.2 3.34s.89 2.67 2.2 3.34c-.46 1.39-.21 2.9.8 3.91s2.52 1.27 3.91.81c.67 1.31 1.91 2.19 3.34 2.19s2.68-.88 3.34-2.19c1.39.46 2.9.2 3.91-.81s1.27-2.52.81-3.91c1.31-.67 2.19-1.91 2.19-3.34zm-11.71 4.2L6.8 12.46l1.41-1.42 2.26 2.26 4.8-5.23 1.47 1.36-6.2 6.77z"></path></g></svg></span>' : '') +
         '<span class="x-post-handle">' + xEscape(data.handle) + '</span>' +
         '<span class="x-post-dot">·</span>' +
-        '<span class="x-post-time">' + xEscape(data.time) + '</span>' +
+        '<span class="x-post-time">' + xEscape(timeLabel) + '</span>' +
         '<span class="x-post-more"><svg viewBox="0 0 24 24"><g><path d="M3 12c0-1.1.9-2 2-2s2 .9 2 2-.9 2-2 2-2-.9-2-2zm9 2c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm7 0c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"></path></g></svg></span>' +
       '</div>' +
       '<div class="x-post-content">' + contentHTML + '</div>' +
+      imageHTML +
       '<div class="x-post-actions">' +
-        '<button class="x-post-action comment"><svg viewBox="0 0 24 24"><g><path d="M1.751 10c0-4.42 3.584-8.005 8.005-8.005h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.005zm8.005-6.005c-3.317 0-6.005 2.69-6.005 6.005 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"></path></g></svg><span>' + formatXNumber(data.comments) + '</span></button>' +
-        '<button class="x-post-action retweet"><svg viewBox="0 0 24 24"><g><path d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.791-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.791 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"></path></g></svg><span>' + formatXNumber(data.retweets) + '</span></button>' +
-        '<button class="x-post-action like" data-count="' + Number(data.likes || 0) + '" data-base-count="' + Number(data.likes || 0) + '" data-liked="0">' + getXHeartSvg(false) + '<span>' + formatXNumber(data.likes) + '</span></button>' +
-        '<button class="x-post-action views"><svg viewBox="0 0 24 24"><g><path d="M8.75 21V3h2v18h-2zM18 21V8.5h2V21h-2zM4 21l.004-10H6v10H4zm9.248 0v-7h2v7h-2z"></path></g></svg><span>' + formatXNumber(data.views) + '</span></button>' +
-        '<button class="x-post-action bookmark"><svg viewBox="0 0 24 24"><g><path d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"></path></g></svg></button>' +
-        '<button class="x-post-action share"><svg viewBox="0 0 24 24"><g><path d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.29 3.3-1.42-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"></path></g></svg></button>' +
+        '<button class="x-post-action comment" data-action="comment"><svg viewBox="0 0 24 24"><g><path d="M1.751 10c0-4.42 3.584-8.005 8.005-8.005h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.005zm8.005-6.005c-3.317 0-6.005 2.69-6.005 6.005 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"></path></g></svg><span>' + formatXNumber(data.comments) + '</span></button>' +
+        '<button class="x-post-action retweet" data-action="retweet"><svg viewBox="0 0 24 24"><g><path d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.791-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.791 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"></path></g></svg><span>' + formatXNumber(data.retweets) + '</span></button>' +
+        '<button class="x-post-action like' + (liked ? ' liked' : '') + '" data-action="like" data-count="' + Number(data.likes || 0) + '" data-base-count="' + Number(data.likes || 0) + '" data-liked="' + (liked ? '1' : '0') + '">' + getXHeartSvg(liked) + '<span>' + formatXNumber(data.likes) + '</span></button>' +
+        '<button class="x-post-action views" data-action="views"><svg viewBox="0 0 24 24"><g><path d="M8.75 21V3h2v18h-2zM18 21V8.5h2V21h-2zM4 21l.004-10H6v10H4zm9.248 0v-7h2v7h-2z"></path></g></svg><span>' + formatXNumber(data.views) + '</span></button>' +
+        '<button class="x-post-action bookmark" data-action="bookmark"><svg viewBox="0 0 24 24"><g><path d="M4 4.5C4 3.12 5.119 2 6.5 2h11C18.881 2 20 3.12 20 4.5v18.44l-8-5.71-8 5.71V4.5zM6.5 4c-.276 0-.5.22-.5.5v14.56l6-4.29 6 4.29V4.5c0-.28-.224-.5-.5-.5h-11z"></path></g></svg></button>' +
+        '<button class="x-post-action share" data-action="share"><svg viewBox="0 0 24 24"><g><path d="M12 2.59l5.7 5.7-1.41 1.42L13 6.41V16h-2V6.41l-3.29 3.3-1.42-1.42L12 2.59zM21 15l-.02 3.51c0 1.38-1.12 2.49-2.5 2.49H5.5C4.11 21 3 19.88 3 18.5V15h2v3.5c0 .28.22.5.5.5h12.98c.28 0 .5-.22.5-.5L19 15h2z"></path></g></svg></button>' +
       '</div>' +
     '</div>' +
   '</div>'
@@ -723,4 +804,491 @@ function buildXBottomBar() {
       '<span class="icon-active">' + item.activeSvg + '</span>' +
     '</div>'
   }).join('')
+}
+
+// ================= 帖子数据存储 =================
+
+async function getXFeed(user) {
+  if (!user || user.id == null) return []
+  var key = X_FEED_PREFIX + user.id
+  try {
+    if (window.db && db.config) {
+      var row = await db.config.get(key)
+      if (row && Array.isArray(row.value)) return row.value
+    }
+  } catch (e) {}
+
+  // 首次进入用一条演示动态占位，避免空白
+  var seed = [{
+    id: 'seed-1',
+    authorId: null,
+    name: '弯弯协会',
+    verified: true,
+    handle: '@Wanwan_Offical',
+    avatar: 'img/wanwan.png',
+    content: '产品上线请多多关注。#AI #Wanwan',
+    image: '',
+    createdAt: Date.now() - 2 * 3600 * 1000,
+    time: '2小时',
+    comments: 847,
+    retweets: 203,
+    likes: 3654,
+    liked: false,
+    views: '28.6万'
+  }]
+  await saveXFeed(user, seed)
+  return seed
+}
+
+async function saveXFeed(user, feed) {
+  if (!user || user.id == null) return
+  var key = X_FEED_PREFIX + user.id
+  try {
+    if (window.db && db.config) {
+      await db.config.put({ key: key, value: feed })
+    }
+  } catch (e) {
+    console.error('保存 X 动态失败：', e)
+  }
+}
+
+async function getXPostComments(user, postId) {
+  if (!user || user.id == null) return []
+  var key = X_COMMENTS_PREFIX + user.id + '_' + postId
+  try {
+    if (window.db && db.config) {
+      var row = await db.config.get(key)
+      if (row && Array.isArray(row.value)) return row.value
+    }
+  } catch (e) {}
+  return []
+}
+
+async function saveXPostComments(user, postId, comments) {
+  if (!user || user.id == null) return
+  var key = X_COMMENTS_PREFIX + user.id + '_' + postId
+  try {
+    if (window.db && db.config) {
+      await db.config.put({ key: key, value: comments })
+    }
+  } catch (e) {
+    console.error('保存 X 评论失败：', e)
+  }
+}
+
+function genXPostId() {
+  return 'x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
+
+function formatXRelativeTime(ts) {
+  if (!ts) return ''
+  var diff = Math.max(0, Date.now() - ts)
+  var min = Math.floor(diff / 60000)
+  if (min < 1) return '刚刚'
+  if (min < 60) return min + '分钟'
+  var hr = Math.floor(min / 60)
+  if (hr < 24) return hr + '小时'
+  var day = Math.floor(hr / 24)
+  if (day < 7) return day + '天'
+  var d = new Date(ts)
+  return (d.getMonth() + 1) + '月' + d.getDate() + '日'
+}
+
+async function getXAvailableCharacters() {
+  if (!window.db || !db.characters) return []
+  try {
+    return await db.characters.where('type').anyOf(['char', 'npc']).toArray()
+  } catch (e) {
+    return (await db.characters.toArray()).filter(function(c) { return c.type === 'char' || c.type === 'npc' })
+  }
+}
+
+function parseXJsonArray(raw) {
+  if (!raw) return []
+  var text = String(raw).trim()
+  text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '')
+  try {
+    var parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) return parsed
+    if (parsed && Array.isArray(parsed.items)) return parsed.items
+  } catch (e) {}
+  var match = text.match(/\[[\s\S]*\]/)
+  if (match) {
+    try {
+      var parsed2 = JSON.parse(match[0])
+      if (Array.isArray(parsed2)) return parsed2
+    } catch (e2) {}
+  }
+  return []
+}
+
+// ================= 弹窗工具 =================
+
+function openXCenterModal(html) {
+  var app = document.getElementById('app') || document.body
+  var overlay = typeof createOverlay === 'function' ? createOverlay() : document.createElement('div')
+  overlay.className = overlay.className || 'sheet-overlay'
+  var sheet = typeof createSheet === 'function' ? createSheet(html) : document.createElement('div')
+  if (typeof createSheet !== 'function') {
+    sheet.className = 'center-modal'
+    sheet.innerHTML = html
+  }
+  overlay.style.zIndex = '10030'
+  sheet.style.zIndex = '10031'
+  app.appendChild(overlay)
+  app.appendChild(sheet)
+  requestAnimationFrame(function() {
+    overlay.classList.add('show')
+    sheet.classList.add('show')
+  })
+  function close() {
+    overlay.classList.remove('show')
+    sheet.classList.remove('show')
+    setTimeout(function() { overlay.remove(); sheet.remove() }, 250)
+  }
+  overlay.addEventListener('click', close)
+  return { overlay: overlay, sheet: sheet, close: close }
+}
+
+function showXGeneratingModal(title) {
+  var modal = openXCenterModal(
+    '<div class="sheet-title">' + xEscape(title || '生成中') + '</div>' +
+    '<div class="x-generate-loading">' +
+      '<i class="fa fa-spinner fa-spin"></i>' +
+      '<span id="x-generate-status">准备生成...</span>' +
+    '</div>'
+  )
+  return {
+    setStatus: function(text) {
+      var el = modal.sheet.querySelector('#x-generate-status')
+      if (el) el.textContent = text
+    },
+    close: modal.close
+  }
+}
+
+// ================= Feed 互动绑定（首页与详情页共用） =================
+
+function bindXFeedEvents(page, user, options) {
+  options = options || {}
+  var scope = page.querySelector('#x-feed-list') || page
+
+  scope.querySelectorAll('.x-post').forEach(function(postEl) {
+    if (options.noNavigate) return
+    postEl.addEventListener('click', async function(e) {
+      if (e.target.closest('.x-post-actions')) return
+      var id = postEl.dataset.postId
+      if (!id) return
+      var feed = await getXFeed(user)
+      var post = feed.find(function(p) { return String(p.id) === String(id) })
+      if (post) showXPostDetail(user, post)
+    })
+  })
+
+  scope.querySelectorAll('.x-post-action.like').forEach(function(button) {
+    button.addEventListener('click', async function(e) {
+      e.preventDefault()
+      e.stopPropagation()
+      var postEl = button.closest('.x-post')
+      var id = postEl && postEl.dataset.postId
+      if (!id) return
+      var feed = await getXFeed(user)
+      var post = feed.find(function(p) { return String(p.id) === String(id) })
+      if (!post) return
+      post.liked = !post.liked
+      post.likes = Math.max(0, Number(post.likes || 0) + (post.liked ? 1 : -1))
+      await saveXFeed(user, feed)
+      button.dataset.liked = post.liked ? '1' : '0'
+      button.classList.toggle('liked', post.liked)
+      button.innerHTML = getXHeartSvg(post.liked) + '<span>' + formatXNumber(post.likes) + '</span>'
+    })
+  })
+}
+
+// ================= 生成动态（AI 填充时间线） =================
+
+window.showXGenerateSheet = async function() {
+  var user = await getXSessionUser()
+  if (!user) return
+  var chars = await getXAvailableCharacters()
+
+  var charsHTML = chars.length
+    ? chars.map(function(c) {
+        return '<label class="x-gen-char-row"><input type="checkbox" class="x-gen-char-cb" value="' + c.id + '" checked><span>' + xEscape(c.nick || c.name) + '</span></label>'
+      }).join('')
+    : '<div class="x-gen-empty-chars">暂无已建角色，将全部生成路人推文</div>'
+
+  var modal = openXCenterModal(
+    '<div class="sheet-title">生成动态</div>' +
+    '<div class="x-generate-sub">选择参与发帖的角色（不选则全部为路人推文）</div>' +
+    '<div class="x-gen-char-list">' + charsHTML + '</div>' +
+    '<div class="x-gen-count-row"><span>生成数量</span><input type="number" id="x-gen-count" value="6" min="1" max="20" class="input-field x-gen-count-input"></div>' +
+    '<div class="sheet-actions">' +
+      '<button class="btn-ghost btn-pill" id="x-gen-cancel" type="button">取消</button>' +
+      '<button class="btn-pill btn-full" id="x-gen-confirm" type="button">生成</button>' +
+    '</div>'
+  )
+
+  modal.sheet.querySelector('#x-gen-cancel').addEventListener('click', modal.close)
+  modal.sheet.querySelector('#x-gen-confirm').addEventListener('click', async function() {
+    var selectedIds = [].slice.call(modal.sheet.querySelectorAll('.x-gen-char-cb:checked')).map(function(cb) { return parseInt(cb.value, 10) })
+    var countInput = modal.sheet.querySelector('#x-gen-count')
+    var count = parseInt(countInput && countInput.value, 10) || 6
+    modal.close()
+    await generateXFeedPosts(user, selectedIds, count)
+  })
+}
+
+async function generateXFeedPosts(user, charIds, count) {
+  if (!window.callAI) {
+    window.toast && window.toast('请先配置 API')
+    return
+  }
+  var loading = showXGeneratingModal('生成动态')
+  try {
+    loading.setStatus('正在整理角色信息...')
+    var allChars = await getXAvailableCharacters()
+    var chars = charIds && charIds.length
+      ? allChars.filter(function(c) { return charIds.indexOf(c.id) !== -1 })
+      : []
+    var charBlock = chars.length
+      ? chars.map(function(c) { return '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 300) }).join('\n')
+      : '（未指定角色，全部生成路人推文，authorId 为 null）'
+
+    var prompt =
+      '你正在为一个模拟 X（Twitter）平台生成时间线内容。\n\n' +
+      '【参与角色】\n' + charBlock + '\n\n' +
+      '【任务】生成 ' + count + ' 条推文，语气自然、简短、符合社交平台风格，可以有梗、有生活化内容、允许少量话题标签（用 # 开头）。\n' +
+      '如果某条推文属于上面列出的角色，authorId 必须填该角色的 id（数字）；否则视为路人推文，authorId 填 null，author 用随机中文或英文网名。\n' +
+      '禁止生成用户本人（' + getXUserName(user) + '）发的推文。\n\n' +
+      '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
+      '{"authorId": 数字或null, "author": "作者昵称", "content": "推文正文", "hasImage": true或false, "imageDesc": "若hasImage为true，用于生成配图的简短英文描述"}'
+
+    loading.setStatus('AI 正在生成推文...')
+    var raw = await window.callAI([{ role: 'user', content: prompt }], { temperature: 0.9 })
+    var items = parseXJsonArray(raw)
+    if (!items.length) throw new Error('生成结果为空，请重试')
+
+    var feed = await getXFeed(user)
+    for (var i = 0; i < items.length; i++) {
+      loading.setStatus('正在整理第 ' + (i + 1) + '/' + items.length + ' 条...')
+      var item = items[i] || {}
+      var authorId = (item.authorId != null && item.authorId !== "" && !isNaN(Number(item.authorId))) ? Number(item.authorId) : null
+      var authorChar = authorId != null ? chars.find(function(c) { return c.id === authorId }) : null
+      var image = ''
+      if (item.hasImage) {
+        image = await generateXPostImage(item.imageDesc || item.content || '', i)
+      }
+      var authorAccount = authorChar && authorChar.identity && authorChar.identity.account
+      feed.unshift({
+        id: genXPostId(),
+        authorId: authorChar ? authorChar.id : null,
+        name: authorChar ? (authorChar.nick || authorChar.name) : (item.author || 'X用户'),
+        handle: '@' + (authorAccount || (authorChar ? (authorChar.nick || authorChar.name) : (item.author || 'user'))).toString().replace(/\s+/g, '_'),
+        avatar: authorChar ? (authorChar.avatar || '') : '',
+        verified: !!authorChar,
+        content: item.content || '',
+        image: image,
+        createdAt: Date.now() - i * 60000,
+        time: i === 0 ? '刚刚' : (i + '分钟'),
+        comments: Math.floor(Math.random() * 40),
+        retweets: Math.floor(Math.random() * 30),
+        likes: Math.floor(Math.random() * 500),
+        liked: false,
+        views: Math.floor(Math.random() * 5000)
+      })
+    }
+    await saveXFeed(user, feed)
+    loading.close()
+    await renderXPage(user)
+    window.toast && window.toast('已生成 ' + items.length + ' 条动态')
+  } catch (e) {
+    loading.close()
+    console.error('生成 X 动态失败：', e)
+    window.toast && window.toast('生成失败：' + (e.message || e))
+  }
+}
+
+function generateXPostImage(prompt, index) {
+  if (window.generateImage) {
+    return window.generateImage('X (Twitter) post photo, candid, natural lighting, realistic. ' + prompt, { size: '1024x1024' }).catch(function(e) {
+      console.warn('X 图片生成失败，跳过配图：', e)
+      return ''
+    })
+  }
+  return Promise.resolve('')
+}
+
+// ================= 帖子详情 + 生成评论 =================
+
+async function showXPostDetail(user, post) {
+  var existing = document.getElementById('x-detail-page')
+  if (existing) existing.remove()
+
+  var comments = await getXPostComments(user, post.id)
+
+  var page = document.createElement('div')
+  page.id = 'x-detail-page'
+  page.className = 'full-page x-detail-page'
+  page.dataset.postId = post.id
+
+  page.innerHTML =
+    '<div class="page-header">' +
+      '<button class="header-back" id="x-detail-back" type="button"><i class="fa fa-angle-left"></i></button>' +
+      '<span class="header-title">帖子</span>' +
+      '<button class="btn-icon" id="x-detail-generate" type="button" title="生成评论"><i class="fa-solid fa-wand-magic-sparkles"></i></button>' +
+    '</div>' +
+    '<div class="x-detail-scroll" id="x-feed-list">' +
+      buildXPost(post) +
+      '<div class="x-detail-comments-title">评论</div>' +
+      '<div class="x-detail-comments" id="x-detail-comments">' +
+        (comments.length
+          ? renderXCommentsHTML(comments)
+          : '<div class="x-detail-comments-empty">暂无评论<br><button class="btn-ghost btn-sm" id="x-detail-generate-inline" type="button">生成评论</button></div>') +
+      '</div>' +
+    '</div>'
+
+  if (window.openPage) {
+    window.openPage(page)
+  } else {
+    var app = document.getElementById('app') || document.body
+    app.appendChild(page)
+  }
+
+  var backBtn = page.querySelector('#x-detail-back')
+  if (backBtn) {
+    backBtn.addEventListener('click', function() {
+      if (window.closePage) window.closePage('x-detail-page')
+      else page.remove()
+    })
+  }
+
+  var genBtn = page.querySelector('#x-detail-generate')
+  if (genBtn) genBtn.addEventListener('click', function() { generateXPostComments(user, post) })
+  var genInline = page.querySelector('#x-detail-generate-inline')
+  if (genInline) genInline.addEventListener('click', function() { generateXPostComments(user, post) })
+
+  bindXFeedEvents(page, user, { noNavigate: true })
+}
+
+function renderXCommentsHTML(comments) {
+  return comments.map(function(c) {
+    var avatarHTML = c.avatar
+      ? '<img src="' + xEscape(c.avatar) + '" alt="">'
+      : buildXDefaultAvatarHTML(c.author || '')
+    var replyHTML = c.replyToAuthor
+      ? '<div class="x-comment-reply-to">回复 @' + xEscape(c.replyToAuthor) + '</div>'
+      : ''
+    return '<div class="x-comment-item">' +
+      '<div class="x-comment-avatar">' + avatarHTML + '</div>' +
+      '<div class="x-comment-body">' +
+        '<div class="x-comment-header">' +
+          '<span class="x-comment-author">' + xEscape(c.author || '') + '</span>' +
+          '<span class="x-comment-time">' + xEscape(c.time || '') + '</span>' +
+        '</div>' +
+        replyHTML +
+        '<div class="x-comment-content">' + formatXContent(c.content || '') + '</div>' +
+        '<div class="x-comment-likes"><i class="fa-regular fa-heart"></i> ' + formatXNumber(c.likes || 0) + '</div>' +
+      '</div>' +
+    '</div>'
+  }).join('')
+}
+
+async function generateXPostComments(user, post) {
+  if (!window.callAI) {
+    window.toast && window.toast('请先配置 API')
+    return
+  }
+  var existing = await getXPostComments(user, post.id)
+  if (existing.length) {
+    showXCommentRegenerateChoice(user, post, existing)
+    return
+  }
+  await runXCommentGeneration(user, post, { mode: 'replace' })
+}
+
+function showXCommentRegenerateChoice(user, post, existing) {
+  var modal = openXCenterModal(
+    '<div class="sheet-title">生成评论</div>' +
+    '<div class="x-generate-sub">这条帖子已经有评论。你可以继续生成新评论，或删除当前评论后重新生成。</div>' +
+    '<div class="sheet-actions">' +
+      '<button class="btn-ghost btn-pill" id="x-comment-choice-cancel" type="button">取消</button>' +
+      '<button class="btn-pill" id="x-comment-choice-continue" type="button">继续生成</button>' +
+      '<button class="btn-pill btn-full" id="x-comment-choice-replace" type="button">删除并重新生成</button>' +
+    '</div>'
+  )
+  modal.sheet.querySelector('#x-comment-choice-cancel').addEventListener('click', modal.close)
+  modal.sheet.querySelector('#x-comment-choice-continue').addEventListener('click', function() {
+    modal.close()
+    runXCommentGeneration(user, post, { mode: 'append', existing: existing })
+  })
+  modal.sheet.querySelector('#x-comment-choice-replace').addEventListener('click', function() {
+    modal.close()
+    runXCommentGeneration(user, post, { mode: 'replace' })
+  })
+}
+
+async function runXCommentGeneration(user, post, options) {
+  options = options || {}
+  var loading = showXGeneratingModal('生成评论')
+  try {
+    loading.setStatus('正在整理上下文...')
+    var chars = await getXAvailableCharacters()
+    var charBlock = chars.length
+      ? chars.map(function(c) { return '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 200) }).join('\n')
+      : '（暂无已建角色，全部使用路人评论）'
+    var existingBlock = (options.existing && options.existing.length)
+      ? options.existing.map(function(c) { return '- ' + c.author + '：' + c.content }).join('\n')
+      : '（暂无）'
+
+    var count = 5 + Math.floor(Math.random() * 6)
+    var prompt =
+      '你正在为一条 X（Twitter）帖子生成评论区互动。\n\n' +
+      '【帖子作者】' + post.name + '\n' +
+      '【帖子内容】' + post.content + '\n\n' +
+      '【可参与评论的角色】\n' + charBlock + '\n\n' +
+      '【已有评论】\n' + existingBlock + '\n\n' +
+      '【任务】生成 ' + count + ' 条新评论，风格自然、简短、符合社交平台习惯（夸赞/玩梗/吐槽/互动皆可）。角色评论要贴合其人设、以及和帖子作者的关系。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
+      '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
+      '{"authorId": 数字或null, "author": "评论者昵称", "content": "评论内容", "replyToAuthor": "被回复人昵称，顶级评论留空"}'
+
+    loading.setStatus('AI 正在生成评论...')
+    var raw = await window.callAI([{ role: 'user', content: prompt }], { temperature: 0.9 })
+    var items = parseXJsonArray(raw)
+    if (!items.length) throw new Error('生成结果为空，请重试')
+
+    var newComments = items.map(function(item) {
+      var authorId = (item.authorId != null && item.authorId !== "" && !isNaN(Number(item.authorId))) ? Number(item.authorId) : null
+      var authorChar = authorId != null ? chars.find(function(c) { return c.id === authorId }) : null
+      return {
+        id: genXPostId(),
+        authorId: authorChar ? authorChar.id : null,
+        author: authorChar ? (authorChar.nick || authorChar.name) : (item.author || 'X用户'),
+        avatar: authorChar ? (authorChar.avatar || '') : '',
+        content: item.content || '',
+        replyToAuthor: item.replyToAuthor || '',
+        likes: Math.floor(Math.random() * 60),
+        time: formatXRelativeTime(Date.now())
+      }
+    })
+
+    var comments = options.mode === 'append' ? (options.existing || []).concat(newComments) : newComments
+    await saveXPostComments(user, post.id, comments)
+
+    var feed = await getXFeed(user)
+    var stored = feed.find(function(p) { return String(p.id) === String(post.id) })
+    if (stored) {
+      stored.comments = comments.length
+      await saveXFeed(user, feed)
+      post.comments = comments.length
+    }
+
+    loading.close()
+    window.toast && window.toast(options.mode === 'append' ? '评论已继续生成' : '评论已生成')
+    await showXPostDetail(user, post)
+  } catch (e) {
+    loading.close()
+    console.error('生成 X 评论失败：', e)
+    window.toast && window.toast('生成失败：' + (e.message || e))
+  }
 }

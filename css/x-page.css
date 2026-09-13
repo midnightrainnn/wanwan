@@ -116,7 +116,7 @@
   width: 72px;
   height: 4px;
   border-radius: 2px;
-  background: #1d9bf0;
+  background: #54595e;
 }
 
 .x-tab-arrow {
@@ -236,7 +236,7 @@
 }
 
 .x-hashtag {
-  color: #1d9bf0;
+  color: #54595e;
 }
 
 /* ===== 帖子底部操作栏 ===== */
@@ -271,7 +271,7 @@
 
 .x-post-action.comment:hover,
 .x-post-action.comment:active {
-  color: #1d9bf0;
+  color: #54595e;
 }
 
 .x-post-action.retweet:hover,
@@ -290,17 +290,17 @@
 
 .x-post-action.views:hover,
 .x-post-action.views:active {
-  color: #1d9bf0;
+  color: #54595e;
 }
 
 .x-post-action.bookmark:hover,
 .x-post-action.bookmark:active {
-  color: #1d9bf0;
+  color: #54595e;
 }
 
 .x-post-action.share:hover,
 .x-post-action.share:active {
-  color: #1d9bf0;
+  color: #54595e;
 }
 
 /* ===== 发帖按钮 (FAB) ===== */
@@ -311,7 +311,7 @@
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: #1d9bf0;
+  background: #54595e;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -324,7 +324,7 @@
 }
 
 .x-fab:active {
-  background: #1a8cd8;
+  background: #3f4347;
 }
 
 .x-fab svg {
@@ -392,8 +392,8 @@
 }
 
 .x-bottombar-item.active svg {
-  fill: #1d9bf0;
-  color: #1d9bf0;
+  fill: #54595e;
+  color: #54595e;
 }
 
 /* ===== 发帖页面 (Compose) ===== */
@@ -425,7 +425,7 @@
 }
 
 .x-compose-publish {
-  background: #1d9bf0;
+  background: #54595e;
   border: none;
   color: #fff;
   font-size: 14.5px;
@@ -474,7 +474,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #1d9bf0;
+  background: #54595e;
   color: #fff;
   font-size: 20px;
   font-weight: 500;
@@ -525,7 +525,7 @@
 
 .x-compose-tool i {
   font-size: 18px;
-  color: #1d9bf0;
+  color: #54595e;
 }
 
 /* ===== 返回桌面按钮 ===== */
@@ -739,7 +739,7 @@
   min-height: 154px;
   flex-shrink: 0;
   overflow: hidden;
-  background: #1d9bf0;
+  background: #54595e;
   background-size: cover;
   background-position: center;
 }
@@ -805,7 +805,7 @@
   border-radius: 50%;
   overflow: hidden;
   border: 6px solid #000;
-  background: #1d9bf0;
+  background: #54595e;
 }
 
 .x-profile-avatar img {
@@ -818,7 +818,7 @@
 }
 
 .x-profile-avatar span {
-  background: #1d9bf0;
+  background: #54595e;
 }
 
 .x-profile-name {
@@ -982,7 +982,7 @@
   width: 100%;
   height: 132px;
   border-radius: 8px;
-  background: #1d9bf0;
+  background: #54595e;
   background-size: cover;
   background-position: center;
   color: #fff;
@@ -1010,7 +1010,7 @@
   height: 78px;
   border-radius: 50%;
   border: 5px solid #000;
-  background: #1d9bf0;
+  background: #54595e;
   overflow: hidden;
   margin: -34px 0 16px 12px;
   padding: 0;
@@ -1032,7 +1032,7 @@
 }
 
 .x-profile-edit-avatar span {
-  background: #1d9bf0;
+  background: #54595e;
 }
 
 .x-profile-edit-field {
@@ -1057,7 +1057,7 @@
 }
 
 .x-profile-edit-field .input-field:focus {
-  border-color: #1d9bf0;
+  border-color: #54595e;
 }
 
 .x-profile-edit-grid {
@@ -1223,4 +1223,273 @@
   background: var(--x-bg);
   border-color: var(--x-border);
   color: var(--x-text);
+}
+
+/* ===== 帖子配图 ===== */
+.x-post-image {
+  margin-top: 8px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--x-border);
+  max-width: 425px;
+}
+
+.x-post-image img {
+  width: 100%;
+  max-height: 340px;
+  object-fit: cover;
+  display: block;
+}
+
+/* ===== 首页空状态 ===== */
+.x-feed-empty {
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--x-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* ===== 发帖：图片预览 ===== */
+.x-compose-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.x-compose-image-preview {
+  position: relative;
+  margin-top: 10px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--x-border);
+}
+
+.x-compose-image-preview img {
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  display: block;
+}
+
+.x-compose-image-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.x-compose-image-remove i {
+  font-size: 13px;
+  color: #fff;
+}
+
+/* ===== 双 FAB（生成 + 发帖）===== */
+.x-fab-group {
+  position: absolute;
+  bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 16px);
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  z-index: 5;
+}
+
+.x-fab-group .x-fab {
+  position: static;
+}
+
+.x-fab-secondary {
+  width: 46px;
+  height: 46px;
+  background: var(--x-bg);
+  border: 1px solid var(--x-border-strong);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.x-fab-secondary i {
+  color: var(--x-text);
+  font-size: 17px;
+}
+
+.x-fab-secondary:active {
+  background: var(--x-hover);
+}
+
+/* ===== 生成动态 / 生成评论 弹窗 ===== */
+.x-generate-sub {
+  padding: 0 20px 12px;
+  font-size: 13px;
+  color: var(--c-sub);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.x-generate-loading {
+  padding: 24px 20px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--c-sub);
+}
+
+.x-generate-loading i {
+  font-size: 22px;
+  color: var(--c-accent);
+}
+
+.x-gen-char-list {
+  max-height: 220px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.x-gen-char-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 4px;
+  font-size: 14px;
+  color: var(--c-text);
+}
+
+.x-gen-empty-chars {
+  padding: 12px 4px;
+  font-size: 13px;
+  color: var(--c-hint);
+  text-align: center;
+}
+
+.x-gen-count-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px 4px;
+  font-size: 14px;
+  color: var(--c-text);
+}
+
+.x-gen-count-input {
+  width: 72px;
+  text-align: center;
+}
+
+/* ===== 帖子详情页 ===== */
+.x-detail-page {
+  background: var(--x-bg);
+  color: var(--x-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  z-index: 61;
+  overflow: hidden;
+}
+
+.x-detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.x-detail-comments-title {
+  padding: 14px 16px 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--x-text);
+  border-bottom: 1px solid var(--x-border);
+  padding-bottom: 10px;
+}
+
+.x-detail-comments-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--x-muted);
+  font-size: 13px;
+  line-height: 2;
+}
+
+/* ===== 评论列表 ===== */
+.x-comment-item {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--x-border);
+}
+
+.x-comment-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.x-comment-avatar img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
+
+.x-comment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.x-comment-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.x-comment-author {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--x-text);
+}
+
+.x-comment-time {
+  font-size: 12px;
+  color: var(--x-muted);
+}
+
+.x-comment-reply-to {
+  font-size: 12px;
+  color: var(--x-muted);
+  margin-top: 2px;
+}
+
+.x-comment-content {
+  margin-top: 3px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--x-text);
+  word-break: break-word;
+}
+
+.x-comment-likes {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--x-muted);
 }
