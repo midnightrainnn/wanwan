@@ -987,6 +987,15 @@ async function buildXRecentChatContextMap(user, chars) {
   return map
 }
 
+// 指定角色在 X 上必须使用的语言（目前仅按名字匹配 Tony；以后可以改成读取角色专属设置）
+function getXCharacterLanguageNote(c) {
+  var name = String((c && (c.nick || c.name)) || '').toLowerCase()
+  if (name.indexOf('tony') !== -1) {
+    return '\n  【语言要求·最高优先级】该角色在 X 上发布的所有推文和评论必须使用英文（English）撰写，不需要附带中文翻译，禁止使用中文。'
+  }
+  return ''
+}
+
 function parseXJsonArray(raw) {
   if (!raw) return []
   var text = String(raw).trim()
@@ -1004,6 +1013,16 @@ function parseXJsonArray(raw) {
     } catch (e2) {}
   }
   return []
+}
+
+// 部分模型会在 JSON 字符串里直接写 HTML 实体（比如把撇号写成 &#39;），这里统一解码一次，避免显示成字面字符
+function decodeXHtmlEntities(str) {
+  return String(str || '')
+    .replace(/&#39;|&#x27;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')
 }
 
 // ================= 弹窗工具 =================
@@ -1087,6 +1106,54 @@ function bindXFeedEvents(page, user, options) {
       button.innerHTML = getXHeartSvg(post.liked) + '<span>' + formatXNumber(post.likes) + '</span>'
     })
   })
+
+  scope.querySelectorAll('.x-post-more').forEach(function(moreBtn) {
+    moreBtn.addEventListener('click', function(e) {
+      e.preventDefault()
+      e.stopPropagation()
+      var postEl = moreBtn.closest('.x-post')
+      var id = postEl && postEl.dataset.postId
+      if (!id) return
+      showXPostActionSheet(user, id, options)
+    })
+  })
+}
+
+function showXPostActionSheet(user, postId, options) {
+  options = options || {}
+  var modal = openXCenterModal(
+    '<div class="sheet-title">帖子操作</div>' +
+    '<div class="x-post-action-sheet-body">' +
+      '<button class="btn-pill btn-full x-post-action-delete" id="x-post-action-delete" type="button">删除帖子</button>' +
+      '<button class="btn-ghost btn-pill btn-full" id="x-post-action-cancel" type="button">取消</button>' +
+    '</div>'
+  )
+  modal.sheet.querySelector('#x-post-action-cancel').addEventListener('click', modal.close)
+  modal.sheet.querySelector('#x-post-action-delete').addEventListener('click', async function() {
+    modal.close()
+    await deleteXPost(user, postId)
+    window.toast && window.toast('已删除')
+    if (options.onDeleted) {
+      await options.onDeleted()
+    } else {
+      await renderXPage(user)
+    }
+  })
+}
+
+async function deleteXPost(user, postId) {
+  var feed = await getXFeed(user)
+  var next = feed.filter(function(p) { return String(p.id) !== String(postId) })
+  await saveXFeed(user, next)
+  await deleteXPostComments(user, postId)
+}
+
+async function deleteXPostComments(user, postId) {
+  if (!user || user.id == null) return
+  var key = X_COMMENTS_PREFIX + user.id + '_' + postId
+  try {
+    if (window.db && db.config) await db.config.delete(key)
+  } catch (e) {}
 }
 
 // ================= 生成动态（AI 填充时间线） =================
@@ -1141,7 +1208,9 @@ async function generateXFeedPosts(user, charIds, count) {
       ? chars.map(function(c) {
           var base = '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 300)
           var chat = chatContextMap[c.id]
-          return chat ? base + '\n  ' + chat.replace(/\n/g, '\n  ') : base
+          if (chat) base += '\n  ' + chat.replace(/\n/g, '\n  ')
+          base += getXCharacterLanguageNote(c)
+          return base
         }).join('\n')
       : '（未指定角色，全部生成路人推文，authorId 为 null）'
 
@@ -1150,6 +1219,7 @@ async function generateXFeedPosts(user, charIds, count) {
       '【参与角色】\n' + charBlock + '\n\n' +
       '【任务】生成 ' + count + ' 条推文，语气自然、简短、符合社交平台风格，可以有梗、有生活化内容、允许少量话题标签（用 # 开头）。\n' +
       '如果角色有"近期微信聊天记录"，可以在合适的地方自然呼应或提及最近聊过的内容（比如刚聊完的话题、心情），增强连续性，但不要每条都提、也不要生硬复述。\n' +
+      '如果某个角色标注了【语言要求】，该角色的每一条推文都必须严格使用指定语言撰写，优先级高于其他所有规则，不能违反。\n' +
       '如果某条推文属于上面列出的角色，authorId 必须填该角色的 id（数字）；否则视为路人推文，authorId 填 null，author 用随机中文或英文网名。\n' +
       '禁止生成用户本人（' + getXUserName(user) + '）发的推文。\n\n' +
       '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
@@ -1164,6 +1234,7 @@ async function generateXFeedPosts(user, charIds, count) {
     for (var i = 0; i < items.length; i++) {
       loading.setStatus('正在整理第 ' + (i + 1) + '/' + items.length + ' 条...')
       var item = items[i] || {}
+      item.content = decodeXHtmlEntities(item.content)
       var authorId = (item.authorId != null && item.authorId !== "" && !isNaN(Number(item.authorId))) ? Number(item.authorId) : null
       var authorChar = authorId != null ? chars.find(function(c) { return c.id === authorId }) : null
       var image = ''
@@ -1259,7 +1330,14 @@ async function showXPostDetail(user, post) {
   var genInline = page.querySelector('#x-detail-generate-inline')
   if (genInline) genInline.addEventListener('click', function() { generateXPostComments(user, post) })
 
-  bindXFeedEvents(page, user, { noNavigate: true })
+  bindXFeedEvents(page, user, {
+    noNavigate: true,
+    onDeleted: async function() {
+      await renderXPage(user)
+      if (window.closePage) window.closePage('x-detail-page')
+      else page.remove()
+    }
+  })
 }
 
 function renderXCommentsHTML(comments) {
@@ -1331,7 +1409,9 @@ async function runXCommentGeneration(user, post, options) {
       ? chars.map(function(c) {
           var base = '- ' + (c.nick || c.name) + '（id:' + c.id + '）：' + String(c.description || '无设定').slice(0, 200)
           var chat = chatContextMap[c.id]
-          return chat ? base + '\n  ' + chat.replace(/\n/g, '\n  ') : base
+          if (chat) base += '\n  ' + chat.replace(/\n/g, '\n  ')
+          base += getXCharacterLanguageNote(c)
+          return base
         }).join('\n')
       : '（暂无已建角色，全部使用路人评论）'
     var existingBlock = (options.existing && options.existing.length)
@@ -1345,7 +1425,7 @@ async function runXCommentGeneration(user, post, options) {
       '【帖子内容】' + post.content + '\n\n' +
       '【可参与评论的角色】\n' + charBlock + '\n\n' +
       '【已有评论】\n' + existingBlock + '\n\n' +
-      '【任务】生成 ' + count + ' 条新评论，风格自然、简短、符合社交平台习惯（夸赞/玩梗/吐槽/互动皆可）。角色评论要贴合其人设、以及和帖子作者的关系。如果角色有"近期微信聊天记录"且与当前帖子情境相关，可以自然呼应（比如提到刚聊过的事、吐槽对方"这时候还有空发帖"之类），但不要生硬复述或每条都提。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
+      '【任务】生成 ' + count + ' 条新评论，风格自然、简短、符合社交平台习惯（夸赞/玩梗/吐槽/互动皆可）。角色评论要贴合其人设、以及和帖子作者的关系。如果角色有"近期微信聊天记录"且与当前帖子情境相关，可以自然呼应（比如提到刚聊过的事、吐槽对方"这时候还有空发帖"之类），但不要生硬复述或每条都提。如果某个角色标注了【语言要求】，该角色的每一条评论都必须严格使用指定语言撰写，优先级高于其他所有规则，不能违反。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
       '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
       '{"authorId": 数字或null, "author": "评论者昵称", "content": "评论内容", "replyToAuthor": "被回复人昵称，顶级评论留空"}'
 
@@ -1362,7 +1442,7 @@ async function runXCommentGeneration(user, post, options) {
         authorId: authorChar ? authorChar.id : null,
         author: authorChar ? (authorChar.nick || authorChar.name) : (item.author || 'X用户'),
         avatar: authorChar ? (authorChar.avatar || '') : '',
-        content: item.content || '',
+        content: decodeXHtmlEntities(item.content || ''),
         replyToAuthor: item.replyToAuthor || '',
         likes: Math.floor(Math.random() * 60),
         time: formatXRelativeTime(Date.now())

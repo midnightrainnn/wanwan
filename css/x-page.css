@@ -1493,3 +1493,16 @@
   font-size: 12px;
   color: var(--x-muted);
 }
+
+/* ===== 帖子操作菜单 ===== */
+.x-post-action-sheet-body {
+  padding: 4px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.x-post-action-delete {
+  background: var(--c-red);
+  color: #fff;
+}
