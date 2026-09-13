@@ -4,6 +4,20 @@ var X_SESSION_UID_KEY = 'wanwan_x_uid'
 var X_PROFILE_PREFIX = 'wanwan_x_profile_'
 var X_FEED_PREFIX = 'wanwan_x_feed_'
 var X_COMMENTS_PREFIX = 'wanwan_x_comments_'
+var X_GEN_IMG_PREF_PREFIX = 'wanwan_x_genimg_pref_'
+
+async function getXGenImagePref(user) {
+  if (!user || user.id == null || !window.db || !db.config) return true
+  try {
+    var row = await db.config.get(X_GEN_IMG_PREF_PREFIX + user.id)
+    return row && row.value != null ? !!row.value : true
+  } catch (e) { return true }
+}
+
+async function saveXGenImagePref(user, enabled) {
+  if (!user || user.id == null || !window.db || !db.config) return
+  try { await db.config.put({ key: X_GEN_IMG_PREF_PREFIX + user.id, value: !!enabled }) } catch (e) {}
+}
 
 window.showXPage = async function() {
   var user = await getXSessionUser()
@@ -1188,6 +1202,7 @@ window.showXGenerateSheet = async function() {
   var user = await getXSessionUser()
   if (!user) return
   var chars = await getXAvailableCharacters()
+  var imagePref = await getXGenImagePref(user)
 
   var charsHTML = chars.length
     ? chars.map(function(c) {
@@ -1200,6 +1215,7 @@ window.showXGenerateSheet = async function() {
     '<div class="x-generate-sub">选择参与发帖的角色（不选则全部为路人推文）</div>' +
     '<div class="x-gen-char-list">' + charsHTML + '</div>' +
     '<div class="x-gen-count-row"><span>生成数量</span><input type="number" id="x-gen-count" value="6" min="1" max="20" class="input-field x-gen-count-input"></div>' +
+    '<label class="x-gen-char-row"><input type="checkbox" id="x-gen-image-toggle"' + (imagePref ? ' checked' : '') + '><span>为推文生成配图</span></label>' +
     '<div class="sheet-actions">' +
       '<button class="btn-ghost btn-pill" id="x-gen-cancel" type="button">取消</button>' +
       '<button class="btn-pill btn-full" id="x-gen-confirm" type="button">生成</button>' +
@@ -1211,12 +1227,14 @@ window.showXGenerateSheet = async function() {
     var selectedIds = [].slice.call(modal.sheet.querySelectorAll('.x-gen-char-cb:checked')).map(function(cb) { return parseInt(cb.value, 10) })
     var countInput = modal.sheet.querySelector('#x-gen-count')
     var count = parseInt(countInput && countInput.value, 10) || 6
+    var allowImages = !!(modal.sheet.querySelector('#x-gen-image-toggle') || {}).checked
     modal.close()
-    await generateXFeedPosts(user, selectedIds, count)
+    await saveXGenImagePref(user, allowImages)
+    await generateXFeedPosts(user, selectedIds, count, allowImages)
   })
 }
 
-async function generateXFeedPosts(user, charIds, count) {
+async function generateXFeedPosts(user, charIds, count, allowImages) {
   if (!window.callAI) {
     window.toast && window.toast('请先配置 API')
     return
@@ -1264,7 +1282,7 @@ async function generateXFeedPosts(user, charIds, count) {
       var authorId = (item.authorId != null && item.authorId !== "" && !isNaN(Number(item.authorId))) ? Number(item.authorId) : null
       var authorChar = authorId != null ? chars.find(function(c) { return c.id === authorId }) : null
       var image = ''
-      if (item.hasImage) {
+      if (item.hasImage && allowImages !== false) {
         image = await generateXPostImage(item.imageDesc || item.content || '', i)
       }
       var authorAccount = authorChar && authorChar.identity && authorChar.identity.account
@@ -1399,7 +1417,7 @@ async function generateXPostComments(user, post) {
     showXCommentRegenerateChoice(user, post, existing)
     return
   }
-  await runXCommentGeneration(user, post, { mode: 'replace' })
+  await showXCommentCharSheet(user, post, { mode: 'replace' })
 }
 
 function showXCommentRegenerateChoice(user, post, existing) {
@@ -1415,11 +1433,41 @@ function showXCommentRegenerateChoice(user, post, existing) {
   modal.sheet.querySelector('#x-comment-choice-cancel').addEventListener('click', modal.close)
   modal.sheet.querySelector('#x-comment-choice-continue').addEventListener('click', function() {
     modal.close()
-    runXCommentGeneration(user, post, { mode: 'append', existing: existing })
+    showXCommentCharSheet(user, post, { mode: 'append', existing: existing })
   })
   modal.sheet.querySelector('#x-comment-choice-replace').addEventListener('click', function() {
     modal.close()
-    runXCommentGeneration(user, post, { mode: 'replace' })
+    showXCommentCharSheet(user, post, { mode: 'replace' })
+  })
+}
+
+async function showXCommentCharSheet(user, post, options) {
+  options = options || {}
+  var chars = await getXAvailableCharacters()
+
+  var charsHTML = chars.length
+    ? chars.map(function(c) {
+        return '<label class="x-gen-char-row"><input type="checkbox" class="x-comment-char-cb" value="' + c.id + '" checked><span>' + xEscape(c.nick || c.name) + '</span></label>'
+      }).join('')
+    : '<div class="x-gen-empty-chars">暂无已建角色，将全部生成路人评论</div>'
+
+  var modal = openXCenterModal(
+    '<div class="sheet-title">生成评论</div>' +
+    '<div class="x-generate-sub">选择本次参与评论的角色（不选则全部为路人评论；取消勾选某个角色可以让他这次不出现）</div>' +
+    '<div class="x-gen-char-list">' + charsHTML + '</div>' +
+    '<div class="x-gen-count-row"><span>生成数量</span><input type="number" id="x-comment-gen-count" value="25" min="1" max="50" class="input-field x-gen-count-input"></div>' +
+    '<div class="sheet-actions">' +
+      '<button class="btn-ghost btn-pill" id="x-comment-char-cancel" type="button">取消</button>' +
+      '<button class="btn-pill btn-full" id="x-comment-char-confirm" type="button">生成</button>' +
+    '</div>'
+  )
+  modal.sheet.querySelector('#x-comment-char-cancel').addEventListener('click', modal.close)
+  modal.sheet.querySelector('#x-comment-char-confirm').addEventListener('click', function() {
+    var selectedIds = [].slice.call(modal.sheet.querySelectorAll('.x-comment-char-cb:checked')).map(function(cb) { return parseInt(cb.value, 10) })
+    var countInput = modal.sheet.querySelector('#x-comment-gen-count')
+    var count = parseInt(countInput && countInput.value, 10) || 25
+    modal.close()
+    runXCommentGeneration(user, post, Object.assign({}, options, { charIds: selectedIds, count: count }))
   })
 }
 
@@ -1428,7 +1476,10 @@ async function runXCommentGeneration(user, post, options) {
   var loading = showXGeneratingModal('生成评论')
   try {
     loading.setStatus('正在整理上下文...')
-    var chars = await getXAvailableCharacters()
+    var allChars = await getXAvailableCharacters()
+    var chars = options.charIds && options.charIds.length
+      ? allChars.filter(function(c) { return options.charIds.indexOf(c.id) !== -1 })
+      : allChars
     loading.setStatus('正在读取最近的微信聊天记录...')
     var chatContextMap = await buildXRecentChatContextMap(user, chars)
     var charBlock = chars.length
@@ -1444,7 +1495,7 @@ async function runXCommentGeneration(user, post, options) {
       ? options.existing.map(function(c) { return '- ' + c.author + '：' + c.content }).join('\n')
       : '（暂无）'
 
-    var count = 5 + Math.floor(Math.random() * 6)
+    var count = Number(options.count) > 0 ? Number(options.count) : 25
     var prompt =
       '你正在为一条 X（Twitter）帖子生成评论区互动。\n\n' +
       '【帖子作者】' + post.name + '\n' +
@@ -1452,6 +1503,8 @@ async function runXCommentGeneration(user, post, options) {
       '【可参与评论的角色】\n' + charBlock + '\n\n' +
       '【已有评论】\n' + existingBlock + '\n\n' +
       '【任务】生成 ' + count + ' 条新评论，风格自然、简短、符合社交平台习惯（夸赞/玩梗/吐槽/互动皆可）。角色评论要贴合其人设、以及和帖子作者的关系。如果角色有"近期微信聊天记录"且与当前帖子情境相关，可以自然呼应（比如提到刚聊过的事、吐槽对方"这时候还有空发帖"之类），但不要生硬复述或每条都提。如果某个角色标注了【语言要求】，该角色的每一条评论都必须严格使用指定语言撰写，优先级高于其他所有规则，不能违反。可以有评论互相回复。禁止生成用户本人（' + getXUserName(user) + '）的评论。\n\n' +
+      '【出场频率控制】大多数评论应该来自路人网友，不是每个已建角色都要出现——每个已建角色在这批新评论里最多出现1-2条，不要让同一个角色反复刷屏；已建角色之间也不需要每次都互相回复或搭话，多数情况下各自独立发言就好，只有关系明确很近的角色才偶尔互动一下。\n' +
+      '【去重要求】这' + count + '条评论之间禁止内容、句式、开头相近或重复，每条要有自己的角度和语气（夸赞/吐槽/玩梗/提问/简短感叹/表情包式简短回应等），不要出现两条意思相似的评论。\n\n' +
       '严格只返回 JSON 数组，不要 Markdown 代码块，不要任何解释文字。每条格式：\n' +
       '{"authorId": 数字或null, "author": "评论者昵称", "content": "评论内容", "replyToAuthor": "被回复人昵称，顶级评论留空"}'
 
