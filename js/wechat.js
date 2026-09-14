@@ -17294,11 +17294,11 @@ function clearChatConfirm(chatId, char, chatPage) {
     <div class="sheet-handle"></div>
     <div style="padding:20px 20px 0;text-align:center">
       <div style="font-size:16px;font-weight:500;margin-bottom:8px">清除聊天记录</div>
-      <div style="font-size:13px;color:var(--c-sub)">此操作不可恢复。你可以只清聊天记录，也可以同时清除此聊天绑定的长期记忆。</div>
+      <div style="font-size:13px;color:var(--c-sub)">此操作不可恢复。你可以只清聊天记录，也可以同时清除此聊天绑定的长期记忆（含"想见你"见面记录）。</div>
     </div>
     <div style="padding:16px 20px;display:flex;flex-direction:column;gap:10px">
       <button class="btn-pill" id="sheet-confirm-chat">只清聊天记录</button>
-      <button class="btn-pill" style="background:var(--c-red);color:#fff" id="sheet-confirm-all">聊天和长期记忆都清除</button>
+      <button class="btn-pill" style="background:var(--c-red);color:#fff" id="sheet-confirm-all">聊天、长期记忆、想见你记录都清除</button>
       <button class="btn-ghost btn-pill" id="sheet-cancel">取消</button>
     </div>
   `)
@@ -17313,8 +17313,15 @@ function clearChatConfirm(chatId, char, chatPage) {
       await db.memories.where('chatId').equals(chatId).delete()
       if (db.memoryRuns) await db.memoryRuns.where('chatId').equals(chatId).delete()
     }
+    if (withMemory && db.offlineChats && char && char.id != null) {
+      // "想见你"（offlineChats）是独立于 messages 的表，但会被 getWechatContextOfflineRows
+      // 按 chatId 读回微信上下文里；不清掉的话角色会记得从未在微信里发生过的"见面"内容
+      const offlineRows = await db.offlineChats.where('charId').equals(char.id).toArray()
+      const offlineIds = offlineRows.filter(row => row.chatId === chatId).map(row => row.id)
+      if (offlineIds.length) await db.offlineChats.bulkDelete(offlineIds)
+    }
     if (chatPage && document.body.contains(chatPage)) loadChatMessages(chatPage, chatId)
-    window.toast(withMemory ? '聊天记录和长期记忆已清除' : '聊天记录已清除')
+    window.toast(withMemory ? '聊天记录、长期记忆、想见你记录已清除' : '聊天记录已清除')
     closeWcSheet(sheet)
   }
   sheet.querySelector('#sheet-confirm-chat').addEventListener('click', () => clear(false))
